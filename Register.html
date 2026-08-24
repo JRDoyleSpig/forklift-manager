@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forklift Manager</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#F7F6F2;--surface:#FFF;--surface2:#F0EEE8;--border:#E2DFD6;--text:#1A1916;--muted:#7A7870;--accent:#1256A4;--accent-light:#DEEAF8;--accent-mid:#1E7ED4;--warn:#BA7517;--warn-light:#FAEEDA;--danger:#A32D2D;--danger-light:#FCEBEB;--good:#1D9E75;--good-light:#E1F5EE;--mono:'DM Mono',monospace;--sans:'DM Sans',sans-serif;--radius:10px}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14px;height:100vh;overflow:hidden}
+.app{display:flex;flex-direction:column;height:100vh}
+.topbar{height:60px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0}
+.topbar-title{font-size:15px;font-weight:500;display:flex;align-items:center;gap:10px}
+.logo{width:38px;height:38px;border-radius:8px;background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:600}
+.topbar-actions{display:flex;gap:8px}
+.topbar-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);color:#fff;padding:6px 13px;border-radius:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
+.topbar-btn:hover{background:rgba(255,255,255,.22)}
+.main{display:flex;flex:1;min-height:0}
+.sidebar{width:170px;background:var(--surface);border-right:1px solid var(--border);padding:12px 0;flex-shrink:0}
+.sidebar-section{font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:8px 12px 4px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:8px 12px;border-left:2px solid transparent;color:var(--muted);cursor:pointer;font-size:12px}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--accent-light);border-left-color:var(--accent);color:var(--accent);font-weight:500}
+.nav-icon{width:16px;height:16px}
+.content{flex:1;overflow:auto;padding:16px;min-width:0}
+.hidden{display:none!important}
+.statusbar{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:7px;margin-bottom:12px}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:#bbb}.conn-dot.ok{background:var(--good)}.conn-dot.bad{background:var(--danger)}.conn-dot.loading{background:var(--warn)}
+.stats-row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px}
+.stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px}
+.stat-value{font:600 25px var(--mono);line-height:1.05}.stat-sub{font-size:10px;color:var(--muted);margin-top:5px}
+.stat-card.danger .stat-value{color:var(--danger)}.stat-card.warn .stat-value{color:var(--warn)}.stat-card.good .stat-value{color:var(--good)}.stat-card.accent .stat-value{color:var(--accent)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.panel-head{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}.panel-title{font-size:13px;font-weight:600}
+.empty{padding:28px;text-align:center;color:var(--muted);font-size:12px}
+.attention-row{padding:10px 14px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1.4fr .8fr auto;gap:8px;align-items:center;font-size:12px}.attention-row:last-child{border-bottom:0}.attention-row:hover{background:var(--surface2)}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:600;white-space:nowrap}.badge.red{background:var(--danger-light);color:var(--danger)}.badge.warn{background:var(--warn-light);color:var(--warn)}.badge.green{background:var(--good-light);color:var(--good)}.badge.gray{background:var(--surface2);color:var(--muted)}
+.section-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}.section-title{font-size:15px;font-weight:600}.section-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.search-box{border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:7px 9px;font-size:12px;font-family:var(--sans);color:var(--text)}.search-box:focus{outline:none;border-color:var(--accent-mid)}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:auto;height:calc(100vh - 160px);min-height:320px}
+table{width:100%;border-collapse:collapse;font-size:11px}th{position:sticky;top:0;z-index:2;background:var(--surface2);text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap;cursor:pointer}th:hover{color:var(--text)}td{padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}tr:hover td{background:var(--surface2)}
+.mono{font-family:var(--mono)}.muted{color:var(--muted)}.workroom{font-weight:500}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}.dot-active{background:var(--good)}.dot-down{background:var(--danger)}.dot-retired{background:#aaa}.dot-scrapped{background:#777}
+.sort::after{content:' ↕';opacity:.35}.sort.asc::after{content:' ↑';opacity:1;color:var(--accent)}.sort.desc::after{content:' ↓';opacity:1;color:var(--accent)}
+#error-box{display:none;background:var(--danger-light);border:1px solid #f0caca;color:var(--danger);border-radius:8px;padding:12px 14px;font-size:12px;margin-bottom:12px;line-height:1.5}
+@media(max-width:1000px){.stats-row{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}.sidebar{width:145px}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="topbar-title"><div class="logo">FM</div>Forklift Manager — <span id="top-count">…</span> Forklifts</div>
+    <div class="topbar-actions"><button class="topbar-btn" onclick="loadData(true)">Refresh</button><button class="topbar-btn" onclick="exportCSV()">Export CSV</button></div>
+  </div>
+  <div class="main">
+    <aside class="sidebar">
+      <div class="sidebar-section">Views</div>
+      <div class="nav-item active" data-view="dashboard" onclick="showView('dashboard',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg><span>Dashboard</span>
+      </div>
+      <div class="nav-item" data-view="fleet" onclick="showView('fleet',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><rect x="2" y="3" width="8" height="8" rx="1"/><circle cx="4" cy="13" r="1.3"/><circle cx="9" cy="13" r="1.3"/><path d="M10 6h3l2 3v2h-5z"/></svg><span>All Forklifts</span>
+      </div>
+      <div class="sidebar-section">Coming Later</div>
+      <div class="nav-item" style="opacity:.45;cursor:default"><span>Transactions</span></div>
+      <div class="nav-item" style="opacity:.45;cursor:default"><span>Replacement Planning</span></div>
+    </aside>
+    <main class="content">
+      <div class="statusbar"><span id="conn-dot" class="conn-dot loading"></span><span id="conn-text">Connecting to SharePoint…</span></div>
+      <div id="error-box"></div>
+
+      <section id="view-dashboard">
+        <div class="stats-row" id="stats-row"></div>
+        <div class="grid2">
+          <div class="panel"><div class="panel-head"><div class="panel-title">Needs Attention</div><span class="muted" style="font-size:10px">PM / downtime / stale hours</span></div><div id="attention-list"></div></div>
+          <div class="panel"><div class="panel-head"><div class="panel-title">Fleet Snapshot</div><span class="muted" style="font-size:10px">Current SharePoint records</span></div><div id="snapshot-list"></div></div>
+        </div>
+      </section>
+
+      <section id="view-fleet" class="hidden">
+        <div class="section-header"><div><div class="section-title">All Forklifts</div><div class="muted" style="font-size:11px;margin-top:3px">Live data from the Forklift Fleet SharePoint list</div></div>
+          <div class="section-actions">
+            <input id="fleet-search" class="search-box" placeholder="Search ID, workroom, make, model, serial…" style="width:260px" oninput="renderFleet()">
+            <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option></select>
+            <select id="fuel-filter" class="search-box" onchange="renderFleet()"><option value="">All fuel types</option><option>Propane</option><option>Electric</option><option>Gasoline</option><option>Diesel</option></select>
+          </div>
+        </div>
+        <div class="table-wrap"><table id="fleet-table"></table></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+const MSAL_CFG={auth:{clientId:"d456144c-56d3-469b-8847-4d68d5263562",authority:"https://login.microsoftonline.com/bab151e3-6d5a-4c92-aaaa-fdbb501a398f",redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:"sessionStorage"}};
+const SP_SITE="https://serviceprosgroup.sharepoint.com/sites/PropertyManagement";
+const SP_LIST="Forklift Fleet";
+const SP_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Fleet')";
+const SP_ITEMS_API=SP_LIST_API+"/items";
+const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
+let msalApp,tokenCache=null,fleet=[],fieldMap={},sortKey='workroom',sortDir=1;
+
+function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
+function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
+function clearError(){document.getElementById('error-box').style.display='none';}
+
+async function getToken(){
+  if(tokenCache)return tokenCache;
+  let accounts=msalApp.getAllAccounts();
+  if(!accounts.length){await msalApp.loginPopup({scopes:SP_SCOPES});accounts=msalApp.getAllAccounts();}
+  if(!accounts.length)throw new Error('Microsoft sign-in did not return an account.');
+  try{const r=await msalApp.acquireTokenSilent({scopes:SP_SCOPES,account:accounts[0]});tokenCache=r.accessToken;return tokenCache;}
+  catch(e){const r=await msalApp.acquireTokenPopup({scopes:SP_SCOPES,account:accounts[0]});tokenCache=r.accessToken;return tokenCache;}
+}
+
+function normalizeLabel(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
+async function loadFields(token){
+  const url=SP_LIST_API+"/fields?$select=Title,InternalName,Hidden,ReadOnlyField";
+  const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Could not read Forklift Fleet columns (HTTP '+r.status+').');
+  const data=await r.json();fieldMap={};
+  data.d.results.forEach(f=>{if(!f.Hidden){fieldMap[normalizeLabel(f.Title)]=f.InternalName;}});
+}
+function iv(item,label){const internal=fieldMap[normalizeLabel(label)];return internal?item[internal]:undefined;}
+function dateOnly(v){return v?String(v).substring(0,10):'';}
+function num(v){if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
+function choices(v){if(!v)return[];if(Array.isArray(v))return v; if(v.results&&Array.isArray(v.results))return v.results;return[String(v)];}
+
+function mapItem(i){return{
+  spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),notes:iv(i,'Notes')||''
+};}
+
+async function loadData(force=false){
+  clearError();setConnection('loading',force?'Refreshing SharePoint…':'Connecting to SharePoint…');
+  try{
+    const token=await getToken();
+    await loadFields(token);
+    let url=SP_ITEMS_API+"?$select=*&$top=500&$orderby=Id",all=[];
+    while(url){const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read Forklift Fleet (HTTP '+r.status+').');const d=await r.json();all=all.concat(d.d.results);url=d.d.__next||null;}
+    fleet=all.map(mapItem);
+    document.getElementById('top-count').textContent=fleet.length;
+    setConnection('ok','Connected — live data from PropertyManagement / Forklift Fleet');renderAll();
+  }catch(err){console.error(err);setConnection('bad','SharePoint connection failed');showError(err.message+' If the Lease Manager still works, confirm the list is named exactly “Forklift Fleet” and that you have access to it.');}
+}
+
+function dayDiff(dateStr){if(!dateStr)return null;const today=new Date();today.setHours(0,0,0,0);const d=new Date(dateStr+'T00:00:00');return Math.floor((d-today)/86400000);}
+function daysSince(dateStr){const x=dayDiff(dateStr);return x===null?null:-x;}
+function fmtDate(v){if(!v)return'—';const [y,m,d]=v.split('-');return `${m}/${d}/${y}`;}
+function fmtNum(v){return v===null?'—':Number(v).toLocaleString('en-US');}
+function statusClass(s){s=(s||'').toLowerCase();if(s==='active')return'dot-active';if(s.includes('down'))return'dot-down';if(s==='retired')return'dot-retired';return'dot-scrapped';}
+
+function getAttention(f){const items=[];const pm=dayDiff(f.nextPM);if(pm!==null&&pm<0)items.push({level:'red',label:'PM overdue',detail:Math.abs(pm)+' days'});else if(pm!==null&&pm<=30)items.push({level:'warn',label:'PM due soon',detail:pm+' days'});if((f.status||'').toLowerCase().includes('down'))items.push({level:'red',label:'Down for repair',detail:''});const stale=daysSince(f.hoursUpdated);if(stale!==null&&stale>90)items.push({level:'warn',label:'Hours stale',detail:stale+' days'});return items;}
+function renderStats(){
+  const active=fleet.filter(f=>f.status==='Active').length,down=fleet.filter(f=>f.status==='Down for Repair').length,ret=fleet.filter(f=>f.status==='Retired'||f.status==='Scrapped').length;
+  const overdue=fleet.filter(f=>{const d=dayDiff(f.nextPM);return d!==null&&d<0;}).length;
+  const stale=fleet.filter(f=>{const d=daysSince(f.hoursUpdated);return d!==null&&d>90;}).length;
+  document.getElementById('stats-row').innerHTML=`
+    <div class="stat-card accent"><div class="stat-label">Total Forklifts</div><div class="stat-value">${fleet.length}</div><div class="stat-sub">All fleet records</div></div>
+    <div class="stat-card good"><div class="stat-label">Active</div><div class="stat-value">${active}</div><div class="stat-sub">Currently active</div></div>
+    <div class="stat-card danger"><div class="stat-label">Down for Repair</div><div class="stat-value">${down}</div><div class="stat-sub">Unavailable</div></div>
+    <div class="stat-card"><div class="stat-label">Retired / Scrapped</div><div class="stat-value">${ret}</div><div class="stat-sub">Inactive fleet</div></div>
+    <div class="stat-card ${overdue?'danger':''}"><div class="stat-label">PM Overdue</div><div class="stat-value">${overdue}</div><div class="stat-sub">Based on Next PM Due</div></div>
+    <div class="stat-card ${stale?'warn':''}"><div class="stat-label">Hours >90 Days Old</div><div class="stat-value">${stale}</div><div class="stat-sub">Needs meter update</div></div>`;
+}
+function renderAttention(){
+  const rows=[];fleet.forEach(f=>getAttention(f).forEach(a=>rows.push({f,a})));rows.sort((x,y)=>(x.a.level==='red'?0:1)-(y.a.level==='red'?0:1));
+  const el=document.getElementById('attention-list');if(!rows.length){el.innerHTML='<div class="empty">No current attention items</div>';return;}
+  el.innerHTML=rows.slice(0,10).map(({f,a})=>`<div class="attention-row"><div><strong>${esc(f.id||'—')}</strong> · ${esc(f.workroom||'No workroom')}<br><span class="muted">${esc(f.manufacturer)} ${esc(f.model)}</span></div><span class="badge ${a.level}">${esc(a.label)}</span><span class="mono muted">${esc(a.detail)}</span></div>`).join('');
+}
+function renderSnapshot(){
+  const makes={};fleet.forEach(f=>{const k=f.manufacturer||'Unknown';makes[k]=(makes[k]||0)+1;});const top=Object.entries(makes).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const el=document.getElementById('snapshot-list');if(!fleet.length){el.innerHTML='<div class="empty">No forklift records yet</div>';return;}
+  el.innerHTML=top.map(([m,c])=>`<div class="attention-row" style="grid-template-columns:1fr auto"><span>${esc(m)}</span><span class="mono">${c}</span></div>`).join('');
+}
+
+const COLS=[['id','Forklift ID'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
+function setSort(k){if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}renderFleet();}
+function sortVal(f,k){const v=f[k];if(Array.isArray(v))return v.join(', ').toLowerCase();if(typeof v==='number')return v;return String(v||'').toLowerCase();}
+function esc(v){return String(v??'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
+function renderFleet(){
+  const q=(document.getElementById('fleet-search')?.value||'').toLowerCase(),sf=document.getElementById('status-filter')?.value||'',ff=document.getElementById('fuel-filter')?.value||'';
+  let rows=fleet.filter(f=>{if(sf&&f.status!==sf)return false;if(ff&&f.fuel!==ff)return false;if(q&&!`${f.id} ${f.workroom} ${f.manufacturer} ${f.model} ${f.serial} ${f.serviceVendor}`.toLowerCase().includes(q))return false;return true;});
+  rows.sort((a,b)=>{const av=sortVal(a,sortKey),bv=sortVal(b,sortKey);return av<bv?-sortDir:av>bv?sortDir:0;});
+  const head='<thead><tr>'+COLS.map(([k,l])=>`<th class="sort ${sortKey===k?(sortDir===1?'asc':'desc'):''}" onclick="setSort('${k}')">${l}</th>`).join('')+'</tr></thead>';
+  const body=rows.map(f=>'<tr>'+COLS.map(([k])=>{let v=f[k];if(k==='status')return `<td><span class="status-dot ${statusClass(v)}"></span>${esc(v||'—')}</td>`;if(['hoursUpdated','lastPM','nextPM'].includes(k))v=fmtDate(v);else if(Array.isArray(v))v=v.join(', ')||'—';else if(typeof v==='number')v=fmtNum(v);else v=v||'—';const cls=['id','hours','year','capacity','mastHeight'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
+  document.getElementById('fleet-table').innerHTML=head+'<tbody>'+body+(rows.length?'':`<tr><td colspan="${COLS.length}" class="empty">No forklifts match</td></tr>` )+'</tbody>';
+}
+function exportCSV(){if(!fleet.length){alert('There are no forklift records to export yet.');return;}const headers=COLS.map(c=>c[1]);const rows=fleet.map(f=>COLS.map(([k])=>JSON.stringify(Array.isArray(f[k])?f[k].join('; '):(f[k]??''))).join(','));const csv=headers.join(',')+'\n'+rows.join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='forklift_fleet_'+new Date().toISOString().slice(0,10)+'.csv';a.click();}
+function renderAll(){renderStats();renderAttention();renderSnapshot();renderFleet();}
+function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();}
+
+window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
+</script>
+</body>
+</html>
