@@ -357,8 +357,10 @@ function fieldPayloadValue(label,value){
 function toggleDispositionDateField(){
   const status=String(formVal('ff-status')||'').trim().toLowerCase();
   const wrap=document.getElementById('ff-disposition-date-wrap');
+  const input=document.getElementById('ff-disposition-date');
   const disposed=status==='retired'||status==='scrapped'||status==='sold';
   if(wrap)wrap.style.display=disposed?'':'none';
+  if(!disposed && input)input.value='';
 }
 
 async function saveForklift(){
@@ -366,13 +368,13 @@ async function saveForklift(){
   const forkliftId=formVal('ff-id').trim();
   const selectedWorkroom=formVal('ff-workroom').trim();
   const selectedStatus=formVal('ff-status').trim();
-  const dispositionDate=formVal('ff-disposition-date').trim();
   const disposed=['Retired','Scrapped','Sold'].includes(selectedStatus);
+  const dispositionDate=disposed?formVal('ff-disposition-date').trim():'';
   if(!forkliftId){alert('Forklift ID is required.');return;}
   if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}
-  if(!selectedWorkroom){alert('Current Workroom is required. Select an Active location from Lease Manager.');return;}
+  if(!selectedWorkroom){alert('Current Workroom is required.');return;}
   if(disposed && !dispositionDate){alert('Disposition Date is required for Retired, Scrapped, or Sold. Enter the actual date manually.');return;}
-  if(!activeWorkrooms.includes(selectedWorkroom)){alert('Current Workroom must be an Active Lease Manager location. Refresh the app and choose an Active location.');return;}
+  if(!disposed && !activeWorkrooms.includes(selectedWorkroom)){alert('Active and Down for Repair forklifts must be assigned to an Active Lease Manager location. Refresh the app and choose an Active location.');return;}
 
   const duplicate=fleet.find(x=>x.id===forkliftId && x.spId!==editingForkliftSpId);
   if(duplicate){alert(`${forkliftId} already exists.`);return;}
