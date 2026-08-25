@@ -134,8 +134,10 @@ const SP_SITE="https://serviceprosgroup.sharepoint.com/sites/PropertyManagement"
 const SP_LIST="Forklift Fleet";
 const SP_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Fleet')";
 const SP_ITEMS_API=SP_LIST_API+"/items";
+const LEASE_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Lease%20Manager')";
+const LEASE_ITEMS_API=LEASE_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
-let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
+let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},activeWorkrooms=[],sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -163,6 +165,40 @@ function dateOnly(v){return v?String(v).substring(0,10):'';}
 function num(v){if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
 function choices(v){if(!v)return[];if(Array.isArray(v))return v; if(v.results&&Array.isArray(v.results))return v.results;return[String(v)];}
 
+async function loadActiveWorkrooms(token){
+  // Lease Manager source of truth:
+  // Location = workroom name; LeaseStatus = Active / Inactive.
+  let url=LEASE_ITEMS_API+"?$select=Id,Location,LeaseStatus&$top=500&$orderby=Location",all=[];
+  while(url){
+    const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
+    if(!r.ok)throw new Error('Could not read active locations from Lease Manager (HTTP '+r.status+').');
+    const d=await r.json();
+    all=all.concat(d.d.results);
+    url=d.d.__next||null;
+  }
+  activeWorkrooms=[...new Set(
+    all
+      .filter(x=>String(x.LeaseStatus||'Active').trim().toLowerCase()==='active')
+      .map(x=>String(x.Location||'').trim())
+      .filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+}
+
+function populateWorkroomSelect(currentValue=''){
+  const el=document.getElementById('ff-workroom');
+  if(!el)return;
+  const current=String(currentValue||'').trim();
+  const isActive=activeWorkrooms.includes(current);
+  let html='<option value="">— Select Active Location —</option>';
+  if(current && !isActive){
+    // Display the current invalid/inactive assignment for visibility, but do not allow it
+    // to be selected as a destination after the user chooses another active location.
+    html+=`<option value="${esc(current)}" selected disabled>${esc(current)} — NOT ACTIVE IN LEASE MANAGER</option>`;
+  }
+  html+=activeWorkrooms.map(w=>`<option value="${esc(w)}"${w===current?' selected':''}>${esc(w)}</option>`).join('');
+  el.innerHTML=html;
+}
+
 function mapItem(i){return{
   spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',serviceVendorPhone:iv(i,'Primary Service Vendor Phone')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),notes:iv(i,'Notes')||''
 };}
@@ -172,11 +208,12 @@ async function loadData(force=false){
   try{
     const token=await getToken();
     await loadFields(token);
+    await loadActiveWorkrooms(token);
     let url=SP_ITEMS_API+"?$select=*&$top=500&$orderby=Id",all=[];
     while(url){const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read Forklift Fleet (HTTP '+r.status+').');const d=await r.json();all=all.concat(d.d.results);url=d.d.__next||null;}
     fleet=all.map(mapItem);
     updateTopbarCount();
-    setConnection('ok','Connected — live data from PropertyManagement / Forklift Fleet');renderAll();
+    setConnection('ok',`Connected — Forklift Fleet + ${activeWorkrooms.length} Active Lease Manager locations`);renderAll();
   }catch(err){console.error(err);setConnection('bad','SharePoint connection failed');showError(err.message+' If the Lease Manager still works, confirm the list is named exactly “Forklift Fleet” and that you have access to it.');}
 }
 
@@ -256,7 +293,7 @@ function openForkliftModal(spId){
   document.getElementById('forklift-modal-title').textContent=f?`Edit ${f.id} — ${f.manufacturer} ${f.model}`:'Add Forklift';
 
   setFormVal('ff-id',f?.id||'');
-  setFormVal('ff-workroom',f?.workroom||'');
+  populateWorkroomSelect(f?.workroom||'');
   setFormVal('ff-manufacturer',f?.manufacturer||'');
   setFormVal('ff-model',f?.model||'');
   setFormVal('ff-serial',f?.serial||'');
@@ -310,8 +347,11 @@ function fieldPayloadValue(label,value){
 async function saveForklift(){
   const btn=document.getElementById('forklift-save-btn');
   const forkliftId=formVal('ff-id').trim();
+  const selectedWorkroom=formVal('ff-workroom').trim();
   if(!forkliftId){alert('Forklift ID is required.');return;}
   if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}
+  if(!selectedWorkroom){alert('Current Workroom is required. Select an Active location from Lease Manager.');return;}
+  if(!activeWorkrooms.includes(selectedWorkroom)){alert('Current Workroom must be an Active Lease Manager location. Refresh the app and choose an Active location.');return;}
 
   const duplicate=fleet.find(x=>x.id===forkliftId && x.spId!==editingForkliftSpId);
   if(duplicate){alert(`${forkliftId} already exists.`);return;}
@@ -326,7 +366,7 @@ async function saveForklift(){
       'Manufacturer':formVal('ff-manufacturer').trim(),
       'Model':formVal('ff-model').trim(),
       'Serial Number':formVal('ff-serial').trim(),
-      'Current Workroom':formVal('ff-workroom').trim(),
+      'Current Workroom':selectedWorkroom,
       'Status':formVal('ff-status'),
       'Current Hours':formVal('ff-hours'),
       'Hours Updated':formVal('ff-hours-updated'),
@@ -435,7 +475,7 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
       <div class="form-section">Identification</div>
       <div class="form-grid">
         <div class="form-group"><label class="form-label">Forklift ID</label><input class="form-input" id="ff-id" placeholder="#85"></div>
-        <div class="form-group"><label class="form-label">Current Workroom</label><input class="form-input" id="ff-workroom"></div>
+        <div class="form-group"><label class="form-label">Current Workroom</label><select class="form-input" id="ff-workroom"><option value="">— Loading Active Locations —</option></select></div>
         <div class="form-group"><label class="form-label">Manufacturer</label><input class="form-input" id="ff-manufacturer"></div>
         <div class="form-group"><label class="form-label">Model</label><input class="form-input" id="ff-model"></div>
         <div class="form-group full"><label class="form-label">Serial Number</label><input class="form-input" id="ff-serial"></div>
