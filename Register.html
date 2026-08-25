@@ -102,7 +102,7 @@ const SP_LIST="Forklift Fleet";
 const SP_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Fleet')";
 const SP_ITEMS_API=SP_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
-let msalApp,tokenCache=null,fleet=[],fieldMap={},sortKey='workroom',sortDir=1;
+let msalApp,tokenCache=null,fleet=[],fieldMap={},sortKey='id',sortDir=1;
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -180,7 +180,16 @@ function renderSnapshot(){
 const COLS=[['id','Forklift ID'],['netsuiteMemo','NetSuite Memo'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
 function setSort(k){if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}renderFleet();}
 function netSuiteMemo(f){return [f.id,f.manufacturer,f.model,f.serial].filter(Boolean).join(' ');}
-function sortVal(f,k){const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];if(Array.isArray(v))return v.join(', ').toLowerCase();if(typeof v==='number')return v;return String(v||'').toLowerCase();}
+function sortVal(f,k){
+  const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];
+  if(k==='id'){
+    const m=String(v||'').match(/\d+/);
+    return m?Number(m[0]):Number.MAX_SAFE_INTEGER;
+  }
+  if(Array.isArray(v))return v.join(', ').toLowerCase();
+  if(typeof v==='number')return v;
+  return String(v||'').toLowerCase();
+}
 async function copyMemo(btn,spId){const f=fleet.find(x=>x.spId===spId);if(!f)return;const text=netSuiteMemo(f);try{await navigator.clipboard.writeText(text);}catch(e){const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();}const old=btn.textContent;btn.textContent='Copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent=old;btn.classList.remove('copied');},1200);}
 function esc(v){return String(v??'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
 function renderFleet(){
