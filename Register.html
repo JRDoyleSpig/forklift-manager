@@ -448,7 +448,11 @@ function renderLocationIssues(){
   if(!panel||!list||!count)return;
 
   const activeSet=new Set(activeWorkrooms);
-  const issues=fleet.filter(f=>f.workroom && !activeSet.has(String(f.workroom).trim()));
+  const issues=fleet.filter(f=>{
+    const status=String(f.status||'').trim().toLowerCase();
+    const retiredOrScrapped=status.includes('retired')||status.includes('scrap');
+    return f.workroom && !retiredOrScrapped && !activeSet.has(String(f.workroom).trim());
+  });
 
   count.textContent=issues.length?`${issues.length} forklift${issues.length===1?'':'s'} need review`:'';
   if(!issues.length){
