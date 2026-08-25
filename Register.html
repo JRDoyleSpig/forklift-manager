@@ -183,8 +183,10 @@ function netSuiteMemo(f){return [f.id,f.manufacturer,f.model,f.serial].filter(Bo
 function sortVal(f,k){
   const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];
   if(k==='id'){
-    const m=String(v||'').match(/\d+/);
-    return m?Number(m[0]):Number.MAX_SAFE_INTEGER;
+    const s=String(v||'').trim();
+    const m=s.match(/^#(\d+)$/);
+    if(m) return '0-'+String(Number(m[1])).padStart(10,'0');
+    return '1-'+s.toLowerCase();
   }
   if(Array.isArray(v))return v.join(', ').toLowerCase();
   if(typeof v==='number')return v;
