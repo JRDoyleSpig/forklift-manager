@@ -164,7 +164,7 @@ function num(v){if(v===null||v===undefined||v==='')return null;const n=Number(v)
 function choices(v){if(!v)return[];if(Array.isArray(v))return v; if(v.results&&Array.isArray(v.results))return v.results;return[String(v)];}
 
 function mapItem(i){return{
-  spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),notes:iv(i,'Notes')||''
+  spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',serviceVendorPhone:iv(i,'Primary Service Vendor Phone')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),notes:iv(i,'Notes')||''
 };}
 
 async function loadData(force=false){
@@ -210,7 +210,7 @@ function renderSnapshot(){
   el.innerHTML=top.map(([m,c])=>`<div class="attention-row" style="grid-template-columns:1fr auto"><span>${esc(m)}</span><span class="mono">${c}</span></div>`).join('');
 }
 
-const COLS=[['id','Forklift ID'],['netsuiteMemo','NetSuite Memo'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
+const COLS=[['id','Forklift ID'],['netsuiteMemo','NetSuite Memo'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['serviceVendorPhone','Vendor Phone'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
 function setSort(k){if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}renderFleet();}
 function netSuiteMemo(f){return [f.id,f.manufacturer,f.model,f.serial].filter(Boolean).join(' ');}
 function sortVal(f,k){
@@ -235,7 +235,7 @@ function renderFleet(){
     if(fleetScope==='inactive'&&!inactive)return false;
     if(sf&&f.status!==sf)return false;
     if(ff&&f.fuel!==ff)return false;
-    if(q&&!`${f.id} ${f.workroom} ${f.manufacturer} ${f.model} ${f.serial} ${f.serviceVendor}`.toLowerCase().includes(q))return false;
+    if(q&&!`${f.id} ${f.workroom} ${f.manufacturer} ${f.model} ${f.serial} ${f.serviceVendor} ${f.serviceVendorPhone}`.toLowerCase().includes(q))return false;
     return true;
   });
   rows.sort((a,b)=>{const av=sortVal(a,sortKey),bv=sortVal(b,sortKey);return av<bv?-sortDir:av>bv?sortDir:0;});
@@ -275,6 +275,7 @@ function openForkliftModal(spId){
   setFormVal('ff-acqdate',f?.acquisitionDate||'');
   setFormVal('ff-acqcost',f?.acquisitionCost??'');
   setFormVal('ff-vendor',f?.serviceVendor||'');
+  setFormVal('ff-vendor-phone',f?.serviceVendorPhone||'');
   setFormVal('ff-pmfreq',f?.pmFrequency||'');
   setFormVal('ff-lastpm',f?.lastPM||'');
   setFormVal('ff-nextpm',f?.nextPM||'');
@@ -341,6 +342,7 @@ async function saveForklift(){
       'Mast Height (in)':formVal('ff-mast'),
       'Year':formVal('ff-year'),
       'Primary Service Vendor':formVal('ff-vendor').trim(),
+      'Primary Service Vendor Phone':formVal('ff-vendor-phone').trim(),
       'PM Frequency':formVal('ff-pmfreq').trim(),
       'Last PM Date':formVal('ff-lastpm'),
       'Next PM Due':formVal('ff-nextpm'),
@@ -469,7 +471,8 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
       <div class="form-grid">
         <div class="form-group"><label class="form-label">Acquisition Date</label><input class="form-input" type="date" id="ff-acqdate"></div>
         <div class="form-group"><label class="form-label">Acquisition Cost</label><input class="form-input" type="number" step="0.01" id="ff-acqcost"></div>
-        <div class="form-group full"><label class="form-label">Primary Service Vendor</label><input class="form-input" id="ff-vendor"></div>
+        <div class="form-group"><label class="form-label">Primary Service Vendor</label><input class="form-input" id="ff-vendor"></div>
+        <div class="form-group"><label class="form-label">Primary Service Vendor Phone</label><input class="form-input" id="ff-vendor-phone" type="tel" placeholder="555-555-5555"></div>
         <div class="form-group"><label class="form-label">PM Frequency</label><input class="form-input" id="ff-pmfreq"></div>
         <div class="form-group"><label class="form-label">Last PM Date</label><input class="form-input" type="date" id="ff-lastpm"></div>
         <div class="form-group"><label class="form-label">Next PM Due</label><input class="form-input" type="date" id="ff-nextpm"></div>
