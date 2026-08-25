@@ -43,7 +43,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:14
 .memo-cell{display:flex;align-items:center;gap:6px}.memo-text{font-family:var(--mono);font-size:10px}.copy-btn{border:1px solid var(--border);background:var(--surface);color:var(--accent);padding:3px 7px;border-radius:5px;font-size:10px;font-family:var(--sans);cursor:pointer;white-space:nowrap}.copy-btn:hover{background:var(--accent-light)}.copy-btn.copied{background:var(--good-light);color:var(--good);border-color:#b8e1d4}
 .table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:auto;height:calc(100vh - 160px);min-height:320px}
 table{width:100%;border-collapse:collapse;font-size:11px}th{position:sticky;top:0;z-index:2;background:var(--surface2);text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap;cursor:pointer}th:hover{color:var(--text)}td{padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}tr:hover td{background:var(--surface2)}
-.mono{font-family:var(--mono)}.muted{color:var(--muted)}.workroom{font-weight:500}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}.dot-active{background:var(--good)}.dot-down{background:var(--danger)}.dot-retired{background:#aaa}.dot-scrapped{background:#777}
+.mono{font-family:var(--mono)}.muted{color:var(--muted)}.workroom{font-weight:500}.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}.dot-active{background:var(--good)}.dot-down{background:var(--danger)}.dot-retired{background:#aaa}.dot-scrapped{background:#777}.dot-sold{background:#555}
 .sort::after{content:' ↕';opacity:.35}.sort.asc::after{content:' ↑';opacity:1;color:var(--accent)}.sort.desc::after{content:' ↓';opacity:1;color:var(--accent)}
 #error-box{display:none;background:var(--danger-light);border:1px solid #f0caca;color:var(--danger);border-radius:8px;padding:12px 14px;font-size:12px;margin-bottom:12px;line-height:1.5}
 @media(max-width:1000px){.stats-row{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}.sidebar{width:145px}}
@@ -125,7 +125,7 @@ tr.fleet-row:hover td{background:var(--accent-light)}
           <div class="section-actions">
             <button class="btn primary" onclick="openForkliftModal(null)">+ Add Forklift</button>
             <input id="fleet-search" class="search-box" placeholder="Search ID, workroom, make, model, serial…" style="width:260px" oninput="renderFleet()">
-            <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option></select>
+            <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option><option>Sold</option></select>
             <select id="fuel-filter" class="search-box" onchange="renderFleet()"><option value="">All fuel types</option><option>Propane</option><option>Electric</option><option>Gasoline</option><option>Diesel</option></select>
           </div>
         </div>
@@ -207,7 +207,7 @@ function populateWorkroomSelect(currentValue=''){
 }
 
 function mapItem(i){return{
-  spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',serviceVendorPhone:iv(i,'Primary Service Vendor Phone')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),notes:iv(i,'Notes')||''
+  spId:i.Id,id:String(i.Title||''),manufacturer:iv(i,'Manufacturer')||'',model:iv(i,'Model')||'',serial:iv(i,'Serial Number')||'',workroom:iv(i,'Current Workroom')||'',status:iv(i,'Status')||'',hours:num(iv(i,'Current Hours')),hoursUpdated:dateOnly(iv(i,'Hours Updated')),acquisitionDate:dateOnly(iv(i,'Acquisition Date')),acquisitionCost:num(iv(i,'Acquisition Cost')),attachments:choices(iv(i,'Attachment')),carriageQty:num(iv(i,'Carriage-Mounted Pole Qty')),forkMountedQty:num(iv(i,'Fork-Mounted Pole Qty')),forkQty:num(iv(i,'Fork Qty')),fuel:iv(i,'Fuel Type')||'',tire:iv(i,'Tire Type')||'',capacity:num(iv(i,'Capacity (lbs)')),mastHeight:num(iv(i,'Mast Height (in)')),year:num(iv(i,'Year')),serviceVendor:iv(i,'Primary Service Vendor')||'',serviceVendorPhone:iv(i,'Primary Service Vendor Phone')||'',pmFrequency:iv(i,'PM Frequency')||'',lastPM:dateOnly(iv(i,'Last PM Date')),nextPM:dateOnly(iv(i,'Next PM Due')),dispositionDate:dateOnly(iv(i,'Disposition Date')),notes:iv(i,'Notes')||''
 };}
 
 async function loadData(force=false){
@@ -228,18 +228,18 @@ function dayDiff(dateStr){if(!dateStr)return null;const today=new Date();today.s
 function daysSince(dateStr){const x=dayDiff(dateStr);return x===null?null:-x;}
 function fmtDate(v){if(!v)return'—';const [y,m,d]=v.split('-');return `${m}/${d}/${y}`;}
 function fmtNum(v){return v===null?'—':Number(v).toLocaleString('en-US');}
-function statusClass(s){s=(s||'').toLowerCase();if(s==='active')return'dot-active';if(s.includes('down'))return'dot-down';if(s==='retired')return'dot-retired';return'dot-scrapped';}
+function statusClass(s){s=(s||'').toLowerCase();if(s==='active')return'dot-active';if(s.includes('down'))return'dot-down';if(s==='retired')return'dot-retired';if(s==='sold')return'dot-sold';return'dot-scrapped';}
 
 function getAttention(f){const items=[];const pm=dayDiff(f.nextPM);if(pm!==null&&pm<0)items.push({level:'red',label:'PM overdue',detail:Math.abs(pm)+' days'});else if(pm!==null&&pm<=30)items.push({level:'warn',label:'PM due soon',detail:pm+' days'});if((f.status||'').toLowerCase().includes('down'))items.push({level:'red',label:'Down for repair',detail:''});const stale=daysSince(f.hoursUpdated);if(stale!==null&&stale>90)items.push({level:'warn',label:'Hours stale',detail:stale+' days'});return items;}
 function renderStats(){
-  const active=fleet.filter(f=>f.status==='Active').length,down=fleet.filter(f=>f.status==='Down for Repair').length,ret=fleet.filter(f=>f.status==='Retired'||f.status==='Scrapped').length;
+  const active=fleet.filter(f=>f.status==='Active').length,down=fleet.filter(f=>f.status==='Down for Repair').length,ret=fleet.filter(f=>f.status==='Retired'||f.status==='Scrapped'||f.status==='Sold').length;
   const overdue=fleet.filter(f=>{const d=dayDiff(f.nextPM);return d!==null&&d<0;}).length;
   const stale=fleet.filter(f=>{const d=daysSince(f.hoursUpdated);return d!==null&&d>90;}).length;
   document.getElementById('stats-row').innerHTML=`
     <div class="stat-card accent"><div class="stat-label">Total Forklifts</div><div class="stat-value">${fleet.length}</div><div class="stat-sub">All fleet records</div></div>
     <div class="stat-card good"><div class="stat-label">Active</div><div class="stat-value">${active}</div><div class="stat-sub">Currently active</div></div>
     <div class="stat-card danger"><div class="stat-label">Down for Repair</div><div class="stat-value">${down}</div><div class="stat-sub">Unavailable</div></div>
-    <div class="stat-card"><div class="stat-label">Retired / Scrapped</div><div class="stat-value">${ret}</div><div class="stat-sub">Inactive fleet</div></div>
+    <div class="stat-card"><div class="stat-label">Retired / Scrapped / Sold</div><div class="stat-value">${ret}</div><div class="stat-sub">Inactive fleet</div></div>
     <div class="stat-card ${overdue?'danger':''}"><div class="stat-label">PM Overdue</div><div class="stat-value">${overdue}</div><div class="stat-sub">Based on Next PM Due</div></div>
     <div class="stat-card ${stale?'warn':''}"><div class="stat-label">Hours >90 Days Old</div><div class="stat-value">${stale}</div><div class="stat-sub">Needs meter update</div></div>`;
 }
@@ -254,7 +254,7 @@ function renderSnapshot(){
   el.innerHTML=top.map(([m,c])=>`<div class="attention-row" style="grid-template-columns:1fr auto"><span>${esc(m)}</span><span class="mono">${c}</span></div>`).join('');
 }
 
-const COLS=[['id','Forklift ID'],['netsuiteMemo','NetSuite Memo'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['serviceVendorPhone','Vendor Phone'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
+const COLS=[['id','Forklift ID'],['netsuiteMemo','NetSuite Memo'],['workroom','Current Workroom'],['manufacturer','Manufacturer'],['model','Model'],['serial','Serial Number'],['status','Status'],['dispositionDate','Disposition Date'],['year','Year'],['hours','Current Hours'],['hoursUpdated','Hours Updated'],['fuel','Fuel Type'],['tire','Tire Type'],['capacity','Capacity (lbs)'],['mastHeight','Mast Height (in)'],['attachments','Attachment'],['carriageQty','Carriage Pole Qty'],['forkMountedQty','Fork-Mounted Pole Qty'],['forkQty','Fork Qty'],['serviceVendor','Primary Service Vendor'],['serviceVendorPhone','Vendor Phone'],['pmFrequency','PM Frequency'],['lastPM','Last PM Date'],['nextPM','Next PM Due']];
 function setSort(k){if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=1;}renderFleet();}
 function netSuiteMemo(f){return [f.id,f.manufacturer,f.model,f.serial].filter(Boolean).join(' ');}
 function sortVal(f,k){
@@ -274,12 +274,12 @@ function esc(v){return String(v??'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&l
 function renderFleet(){
   const q=(document.getElementById('fleet-search')?.value||'').toLowerCase(),sf=document.getElementById('status-filter')?.value||'',ff=document.getElementById('fuel-filter')?.value||'';
   let rows=fleet.filter(f=>{
-    const inactive=['Retired','Scrapped'].includes(f.status);
+    const inactive=['Retired','Scrapped','Sold'].includes(f.status);
     if(fleetScope==='active'&&inactive)return false;
     if(fleetScope==='inactive'&&!inactive)return false;
     if(sf&&f.status!==sf)return false;
     if(ff&&f.fuel!==ff)return false;
-    if(q&&!`${f.id} ${f.workroom} ${f.manufacturer} ${f.model} ${f.serial} ${f.serviceVendor} ${f.serviceVendorPhone}`.toLowerCase().includes(q))return false;
+    if(q&&!`${f.id} ${f.workroom} ${f.manufacturer} ${f.model} ${f.serial} ${f.serviceVendor} ${f.serviceVendorPhone} ${f.dispositionDate||''}`.toLowerCase().includes(q))return false;
     return true;
   });
   rows.sort((a,b)=>{const av=sortVal(a,sortKey),bv=sortVal(b,sortKey);return av<bv?-sortDir:av>bv?sortDir:0;});
@@ -305,6 +305,8 @@ function openForkliftModal(spId){
   setFormVal('ff-model',f?.model||'');
   setFormVal('ff-serial',f?.serial||'');
   setFormVal('ff-status',f?.status||'Active');
+  setFormVal('ff-disposition-date',f?.dispositionDate||'');
+  toggleDispositionDateField();
   setFormVal('ff-year',f?.year??'');
   setFormVal('ff-hours',f?.hours??'');
   setFormVal('ff-hours-updated',f?.hoursUpdated||'');
@@ -351,13 +353,25 @@ function fieldPayloadValue(label,value){
   return value??'';
 }
 
+
+function toggleDispositionDateField(){
+  const status=String(formVal('ff-status')||'').trim().toLowerCase();
+  const wrap=document.getElementById('ff-disposition-date-wrap');
+  const disposed=status==='retired'||status==='scrapped'||status==='sold';
+  if(wrap)wrap.style.display=disposed?'':'none';
+}
+
 async function saveForklift(){
   const btn=document.getElementById('forklift-save-btn');
   const forkliftId=formVal('ff-id').trim();
   const selectedWorkroom=formVal('ff-workroom').trim();
+  const selectedStatus=formVal('ff-status').trim();
+  const dispositionDate=formVal('ff-disposition-date').trim();
+  const disposed=['Retired','Scrapped','Sold'].includes(selectedStatus);
   if(!forkliftId){alert('Forklift ID is required.');return;}
   if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}
   if(!selectedWorkroom){alert('Current Workroom is required. Select an Active location from Lease Manager.');return;}
+  if(disposed && !dispositionDate){alert('Disposition Date is required for Retired, Scrapped, or Sold. Enter the actual date manually.');return;}
   if(!activeWorkrooms.includes(selectedWorkroom)){alert('Current Workroom must be an Active Lease Manager location. Refresh the app and choose an Active location.');return;}
 
   const duplicate=fleet.find(x=>x.id===forkliftId && x.spId!==editingForkliftSpId);
@@ -374,7 +388,8 @@ async function saveForklift(){
       'Model':formVal('ff-model').trim(),
       'Serial Number':formVal('ff-serial').trim(),
       'Current Workroom':selectedWorkroom,
-      'Status':formVal('ff-status'),
+      'Status':selectedStatus,
+      'Disposition Date':dispositionDate,
       'Current Hours':formVal('ff-hours'),
       'Hours Updated':formVal('ff-hours-updated'),
       'Acquisition Date':formVal('ff-acqdate'),
@@ -450,7 +465,7 @@ function renderLocationIssues(){
   const activeSet=new Set(activeWorkrooms);
   const issues=fleet.filter(f=>{
     const status=String(f.status||'').trim().toLowerCase();
-    const retiredOrScrapped=status.includes('retired')||status.includes('scrap');
+    const retiredOrScrapped=status.includes('retired')||status.includes('scrap')||status.includes('sold');
     return f.workroom && !retiredOrScrapped && !activeSet.has(String(f.workroom).trim());
   });
 
@@ -477,8 +492,8 @@ function renderLocationIssues(){
 function renderAll(){
   renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();}
 function updateTopbarCount(){
-  const active=fleet.filter(f=>!['Retired','Scrapped'].includes(f.status)).length;
-  const inactive=fleet.filter(f=>['Retired','Scrapped'].includes(f.status)).length;
+  const active=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).length;
+  const inactive=fleet.filter(f=>['Retired','Scrapped','Sold'].includes(f.status)).length;
   const total=fleet.length;
   const countEl=document.getElementById('top-count');
   const titleEl=document.getElementById('top-title-text');
@@ -498,7 +513,7 @@ function showFleetScope(scope,el){
   if(sub) sub.textContent=scope==='active'
     ?'Active and down-for-repair units from the Forklift Fleet SharePoint list'
     :scope==='inactive'
-      ?'Retired and scrapped units from the Forklift Fleet SharePoint list'
+      ?'Retired, scrapped, and sold units from the Forklift Fleet SharePoint list'
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
@@ -522,10 +537,11 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
         <div class="form-group"><label class="form-label">Model</label><input class="form-input" id="ff-model"></div>
         <div class="form-group full"><label class="form-label">Serial Number</label><input class="form-input" id="ff-serial"></div>
         <div class="form-group"><label class="form-label">Status</label>
-          <select class="form-input" id="ff-status">
-            <option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option>
+          <select class="form-input" id="ff-status" onchange="toggleDispositionDateField()">
+            <option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option><option>Sold</option>
           </select>
         </div>
+        <div class="form-group" id="ff-disposition-date-wrap" style="display:none"><label class="form-label">Disposition Date</label><input class="form-input" type="date" id="ff-disposition-date"></div>
         <div class="form-group"><label class="form-label">Year</label><input class="form-input" type="number" id="ff-year"></div>
       </div>
 
