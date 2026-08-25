@@ -47,6 +47,30 @@ table{width:100%;border-collapse:collapse;font-size:11px}th{position:sticky;top:
 .sort::after{content:' ↕';opacity:.35}.sort.asc::after{content:' ↑';opacity:1;color:var(--accent)}.sort.desc::after{content:' ↓';opacity:1;color:var(--accent)}
 #error-box{display:none;background:var(--danger-light);border:1px solid #f0caca;color:var(--danger);border-radius:8px;padding:12px 14px;font-size:12px;margin-bottom:12px;line-height:1.5}
 @media(max-width:1000px){.stats-row{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}.sidebar{width:145px}}
+
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:flex-start;justify-content:center;padding:30px 12px;overflow:auto}
+.modal-backdrop.open{display:flex}
+.modal{width:760px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,.18);overflow:hidden}
+.modal-head{padding:15px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--surface);z-index:2}
+.modal-title{font-size:16px;font-weight:600}
+.modal-close{border:0;background:transparent;font-size:23px;line-height:1;color:var(--muted);cursor:pointer}
+.modal-body{padding:18px;display:flex;flex-direction:column;gap:14px}
+.modal-foot{padding:13px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;position:sticky;bottom:0;background:var(--surface)}
+.form-section{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);padding-bottom:5px;border-bottom:1px solid var(--accent-light)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px 13px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.full{grid-column:1/-1}
+.form-label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+.form-input{border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:7px 9px;font:12px var(--sans);color:var(--text);width:100%}
+.form-input:focus{outline:none;border-color:var(--accent-mid)}
+textarea.form-input{resize:vertical;min-height:72px}
+.btn{border:1px solid var(--border);background:var(--surface);color:var(--text);padding:7px 13px;border-radius:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
+.btn:hover{background:var(--surface2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(.95)}
+tr.fleet-row{cursor:pointer}
+tr.fleet-row:hover td{background:var(--accent-light)}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
 </head>
@@ -90,6 +114,7 @@ table{width:100%;border-collapse:collapse;font-size:11px}th{position:sticky;top:
       <section id="view-fleet" class="hidden">
         <div class="section-header"><div><div class="section-title" id="fleet-view-title">All Forklifts</div><div class="muted" id="fleet-view-subtitle" style="font-size:11px;margin-top:3px">Live data from the Forklift Fleet SharePoint list</div></div>
           <div class="section-actions">
+            <button class="btn primary" onclick="openForkliftModal(null)">+ Add Forklift</button>
             <input id="fleet-search" class="search-box" placeholder="Search ID, workroom, make, model, serial…" style="width:260px" oninput="renderFleet()">
             <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option></select>
             <select id="fuel-filter" class="search-box" onchange="renderFleet()"><option value="">All fuel types</option><option>Propane</option><option>Electric</option><option>Gasoline</option><option>Diesel</option></select>
@@ -108,7 +133,7 @@ const SP_LIST="Forklift Fleet";
 const SP_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Fleet')";
 const SP_ITEMS_API=SP_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
-let msalApp,tokenCache=null,fleet=[],fieldMap={},sortKey='id',sortDir=1,fleetScope='all';
+let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -125,11 +150,11 @@ async function getToken(){
 
 function normalizeLabel(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 async function loadFields(token){
-  const url=SP_LIST_API+"/fields?$select=Title,InternalName,Hidden,ReadOnlyField";
+  const url=SP_LIST_API+"/fields?$select=Title,InternalName,Hidden,ReadOnlyField,TypeAsString";
   const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
   if(!r.ok)throw new Error('Could not read Forklift Fleet columns (HTTP '+r.status+').');
-  const data=await r.json();fieldMap={};
-  data.d.results.forEach(f=>{if(!f.Hidden){fieldMap[normalizeLabel(f.Title)]=f.InternalName;}});
+  const data=await r.json();fieldMap={};fieldMeta={};
+  data.d.results.forEach(f=>{if(!f.Hidden){const k=normalizeLabel(f.Title);fieldMap[k]=f.InternalName;fieldMeta[k]=f;}});
 }
 function iv(item,label){const internal=fieldMap[normalizeLabel(label)];return internal?item[internal]:undefined;}
 function dateOnly(v){return v?String(v).substring(0,10):'';}
@@ -213,10 +238,157 @@ function renderFleet(){
   });
   rows.sort((a,b)=>{const av=sortVal(a,sortKey),bv=sortVal(b,sortKey);return av<bv?-sortDir:av>bv?sortDir:0;});
   const head='<thead><tr>'+COLS.map(([k,l])=>`<th class="sort ${sortKey===k?(sortDir===1?'asc':'desc'):''}" onclick="setSort('${k}')">${l}</th>`).join('')+'</tr></thead>';
-  const body=rows.map(f=>'<tr>'+COLS.map(([k])=>{let v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];if(k==='netsuiteMemo')return `<td><div class="memo-cell"><span class="memo-text">${esc(v||'—')}</span><button class="copy-btn" onclick="copyMemo(this,${f.spId})">Copy</button></div></td>`;if(k==='status')return `<td><span class="status-dot ${statusClass(v)}"></span>${esc(v||'—')}</td>`;if(['hoursUpdated','lastPM','nextPM'].includes(k))v=fmtDate(v);else if(Array.isArray(v))v=v.join(', ')||'—';else if(k==='year')v=String(v);else if(typeof v==='number')v=fmtNum(v);else v=v||'—';const cls=['id','hours','year','capacity','mastHeight'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
+  const body=rows.map(f=>`<tr class="fleet-row" onclick="openForkliftModal(${f.spId})">`+COLS.map(([k])=>{let v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];if(k==='netsuiteMemo')return `<td><div class="memo-cell"><span class="memo-text">${esc(v||'—')}</span><button class="copy-btn" onclick="copyMemo(this,${f.spId})">Copy</button></div></td>`;if(k==='status')return `<td><span class="status-dot ${statusClass(v)}"></span>${esc(v||'—')}</td>`;if(['hoursUpdated','lastPM','nextPM'].includes(k))v=fmtDate(v);else if(Array.isArray(v))v=v.join(', ')||'—';else if(k==='year')v=String(v);else if(typeof v==='number')v=fmtNum(v);else v=v||'—';const cls=['id','hours','year','capacity','mastHeight'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
   document.getElementById('fleet-table').innerHTML=head+'<tbody>'+body+(rows.length?'':`<tr><td colspan="${COLS.length}" class="empty">No forklifts match</td></tr>` )+'</tbody>';
 }
 function exportCSV(){if(!fleet.length){alert('There are no forklift records to export yet.');return;}const headers=COLS.map(c=>c[1]);const rows=fleet.map(f=>COLS.map(([k])=>{const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];return JSON.stringify(Array.isArray(v)?v.join('; '):(v??''));}).join(','));const csv=headers.join(',')+'\n'+rows.join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='forklift_fleet_'+new Date().toISOString().slice(0,10)+'.csv';a.click();}
+
+function formVal(id){return document.getElementById(id)?.value??'';}
+function setFormVal(id,v){const e=document.getElementById(id);if(e)e.value=(v===null||v===undefined)?'':v;}
+function numOrNull(v){if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
+function spDateOrNull(v){return v?v+'T00:00:00Z':null;}
+
+function openForkliftModal(spId){
+  editingForkliftSpId=spId||null;
+  const f=spId?fleet.find(x=>x.spId===spId):null;
+  document.getElementById('forklift-modal-title').textContent=f?`Edit ${f.id} — ${f.manufacturer} ${f.model}`:'Add Forklift';
+
+  setFormVal('ff-id',f?.id||'');
+  setFormVal('ff-workroom',f?.workroom||'');
+  setFormVal('ff-manufacturer',f?.manufacturer||'');
+  setFormVal('ff-model',f?.model||'');
+  setFormVal('ff-serial',f?.serial||'');
+  setFormVal('ff-status',f?.status||'Active');
+  setFormVal('ff-year',f?.year??'');
+  setFormVal('ff-hours',f?.hours??'');
+  setFormVal('ff-hours-updated',f?.hoursUpdated||'');
+  setFormVal('ff-fuel',f?.fuel||'');
+  setFormVal('ff-tire',f?.tire||'');
+  setFormVal('ff-capacity',f?.capacity??'');
+  setFormVal('ff-mast',f?.mastHeight??'');
+  setFormVal('ff-attachment',(f?.attachments||[]).join('; '));
+  setFormVal('ff-carriage',f?.carriageQty??'');
+  setFormVal('ff-forkmounted',f?.forkMountedQty??'');
+  setFormVal('ff-forkqty',f?.forkQty??'');
+  setFormVal('ff-acqdate',f?.acquisitionDate||'');
+  setFormVal('ff-acqcost',f?.acquisitionCost??'');
+  setFormVal('ff-vendor',f?.serviceVendor||'');
+  setFormVal('ff-pmfreq',f?.pmFrequency||'');
+  setFormVal('ff-lastpm',f?.lastPM||'');
+  setFormVal('ff-nextpm',f?.nextPM||'');
+  setFormVal('ff-notes',f?.notes||'');
+
+  document.getElementById('forklift-modal').classList.add('open');
+}
+
+function closeForkliftModal(){
+  document.getElementById('forklift-modal').classList.remove('open');
+  editingForkliftSpId=null;
+}
+
+async function getListItemType(token){
+  const r=await fetch(SP_LIST_API+"?$select=ListItemEntityTypeFullName",{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Could not read SharePoint list type (HTTP '+r.status+').');
+  return (await r.json()).d.ListItemEntityTypeFullName;
+}
+
+function fieldPayloadValue(label,value){
+  const meta=fieldMeta[normalizeLabel(label)];
+  const t=meta?.TypeAsString||'';
+  if(t==='MultiChoice'){
+    const arr=String(value||'').split(';').map(x=>x.trim()).filter(Boolean);
+    return {results:arr};
+  }
+  if(['Number','Currency','Integer','Counter'].includes(t)) return numOrNull(value);
+  if(t==='DateTime') return value?spDateOrNull(value):null;
+  return value??'';
+}
+
+async function saveForklift(){
+  const btn=document.getElementById('forklift-save-btn');
+  const forkliftId=formVal('ff-id').trim();
+  if(!forkliftId){alert('Forklift ID is required.');return;}
+  if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}
+
+  const duplicate=fleet.find(x=>x.id===forkliftId && x.spId!==editingForkliftSpId);
+  if(duplicate){alert(`${forkliftId} already exists.`);return;}
+
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    const token=await getToken();
+    const itemType=await getListItemType(token);
+    const body={"__metadata":{"type":itemType},"Title":forkliftId};
+
+    const values={
+      'Manufacturer':formVal('ff-manufacturer').trim(),
+      'Model':formVal('ff-model').trim(),
+      'Serial Number':formVal('ff-serial').trim(),
+      'Current Workroom':formVal('ff-workroom').trim(),
+      'Status':formVal('ff-status'),
+      'Current Hours':formVal('ff-hours'),
+      'Hours Updated':formVal('ff-hours-updated'),
+      'Acquisition Date':formVal('ff-acqdate'),
+      'Acquisition Cost':formVal('ff-acqcost'),
+      'Attachment':formVal('ff-attachment'),
+      'Carriage-Mounted Pole Qty':formVal('ff-carriage'),
+      'Fork-Mounted Pole Qty':formVal('ff-forkmounted'),
+      'Fork Qty':formVal('ff-forkqty'),
+      'Fuel Type':formVal('ff-fuel'),
+      'Tire Type':formVal('ff-tire').trim(),
+      'Capacity (lbs)':formVal('ff-capacity'),
+      'Mast Height (in)':formVal('ff-mast'),
+      'Year':formVal('ff-year'),
+      'Primary Service Vendor':formVal('ff-vendor').trim(),
+      'PM Frequency':formVal('ff-pmfreq').trim(),
+      'Last PM Date':formVal('ff-lastpm'),
+      'Next PM Due':formVal('ff-nextpm'),
+      'Notes':formVal('ff-notes').trim()
+    };
+
+    for(const [label,value] of Object.entries(values)){
+      const internal=fieldMap[normalizeLabel(label)];
+      if(!internal)continue;
+      body[internal]=fieldPayloadValue(label,value);
+    }
+
+    if(editingForkliftSpId){
+      const r=await fetch(SP_ITEMS_API+"("+editingForkliftSpId+")",{
+        method:'POST',
+        headers:{
+          Accept:'application/json;odata=verbose',
+          'Content-Type':'application/json;odata=verbose',
+          Authorization:'Bearer '+token,
+          'X-HTTP-Method':'MERGE',
+          'IF-MATCH':'*'
+        },
+        body:JSON.stringify(body)
+      });
+      if(!r.ok)throw new Error('SharePoint update failed (HTTP '+r.status+'): '+await r.text());
+    }else{
+      const r=await fetch(SP_ITEMS_API,{
+        method:'POST',
+        headers:{
+          Accept:'application/json;odata=verbose',
+          'Content-Type':'application/json;odata=verbose',
+          Authorization:'Bearer '+token
+        },
+        body:JSON.stringify(body)
+      });
+      if(!r.ok)throw new Error('SharePoint create failed (HTTP '+r.status+'): '+await r.text());
+    }
+
+    document.getElementById('forklift-modal').classList.remove('open');
+    editingForkliftSpId=null;
+    tokenCache=null;
+    await loadData(true);
+  }catch(err){
+    console.error(err);
+    alert('Save failed: '+err.message);
+  }finally{
+    btn.disabled=false;btn.textContent='Save Forklift';
+  }
+}
+
 function renderAll(){renderStats();renderAttention();renderSnapshot();renderFleet();}
 function showFleetScope(scope,el){
   fleetScope=scope;
@@ -234,5 +406,70 @@ function showView(name,el){document.getElementById('view-dashboard').classList.t
 
 window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
 </script>
+
+<div class="modal-backdrop" id="forklift-modal" onclick="if(event.target===this)closeForkliftModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="forklift-modal-title">Add Forklift</div>
+      <button class="modal-close" onclick="closeForkliftModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-section">Identification</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Forklift ID</label><input class="form-input" id="ff-id" placeholder="#85"></div>
+        <div class="form-group"><label class="form-label">Current Workroom</label><input class="form-input" id="ff-workroom"></div>
+        <div class="form-group"><label class="form-label">Manufacturer</label><input class="form-input" id="ff-manufacturer"></div>
+        <div class="form-group"><label class="form-label">Model</label><input class="form-input" id="ff-model"></div>
+        <div class="form-group full"><label class="form-label">Serial Number</label><input class="form-input" id="ff-serial"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-input" id="ff-status">
+            <option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Year</label><input class="form-input" type="number" id="ff-year"></div>
+      </div>
+
+      <div class="form-section">Meter & Specs</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Current Hours</label><input class="form-input" type="number" step="0.1" id="ff-hours"></div>
+        <div class="form-group"><label class="form-label">Hours Updated</label><input class="form-input" type="date" id="ff-hours-updated"></div>
+        <div class="form-group"><label class="form-label">Fuel Type</label>
+          <select class="form-input" id="ff-fuel"><option value=""></option><option>Propane</option><option>Electric</option><option>Gasoline</option><option>Diesel</option></select>
+        </div>
+        <div class="form-group"><label class="form-label">Tire Type</label><input class="form-input" id="ff-tire"></div>
+        <div class="form-group"><label class="form-label">Capacity (lbs)</label><input class="form-input" type="number" id="ff-capacity"></div>
+        <div class="form-group"><label class="form-label">Mast Height (in)</label><input class="form-input" type="number" id="ff-mast"></div>
+      </div>
+
+      <div class="form-section">Attachments / Forks</div>
+      <div class="form-grid">
+        <div class="form-group full"><label class="form-label">Attachment</label><input class="form-input" id="ff-attachment" placeholder="Separate multiple values with ;"></div>
+        <div class="form-group"><label class="form-label">Carriage-Mounted Pole Qty</label><input class="form-input" type="number" id="ff-carriage"></div>
+        <div class="form-group"><label class="form-label">Fork-Mounted Pole Qty</label><input class="form-input" type="number" id="ff-forkmounted"></div>
+        <div class="form-group"><label class="form-label">Fork Qty</label><input class="form-input" type="number" id="ff-forkqty"></div>
+      </div>
+
+      <div class="form-section">Acquisition & Service</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Acquisition Date</label><input class="form-input" type="date" id="ff-acqdate"></div>
+        <div class="form-group"><label class="form-label">Acquisition Cost</label><input class="form-input" type="number" step="0.01" id="ff-acqcost"></div>
+        <div class="form-group full"><label class="form-label">Primary Service Vendor</label><input class="form-input" id="ff-vendor"></div>
+        <div class="form-group"><label class="form-label">PM Frequency</label><input class="form-input" id="ff-pmfreq"></div>
+        <div class="form-group"><label class="form-label">Last PM Date</label><input class="form-input" type="date" id="ff-lastpm"></div>
+        <div class="form-group"><label class="form-label">Next PM Due</label><input class="form-input" type="date" id="ff-nextpm"></div>
+      </div>
+
+      <div class="form-section">Notes</div>
+      <div class="form-grid">
+        <div class="form-group full"><textarea class="form-input" id="ff-notes"></textarea></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeForkliftModal()">Cancel</button>
+      <button class="btn primary" id="forklift-save-btn" onclick="saveForklift()">Save Forklift</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
