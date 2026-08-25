@@ -107,6 +107,13 @@ tr.fleet-row:hover td{background:var(--accent-light)}
 
       <section id="view-dashboard">
         <div class="stats-row" id="stats-row"></div>
+  <div class="alerts-panel" id="location-issues-panel" style="display:none">
+    <div class="alerts-header">
+      <h3>Location Issues</h3>
+      <span id="location-issues-count" style="font-size:11px;color:var(--muted)"></span>
+    </div>
+    <div id="location-issues-list"></div>
+  </div>
         <div class="grid2">
           <div class="panel"><div class="panel-head"><div class="panel-title">Needs Attention</div><span class="muted" style="font-size:10px">PM / downtime / stale hours</span></div><div id="attention-list"></div></div>
           <div class="panel"><div class="panel-head"><div class="panel-title">Fleet Snapshot</div><span class="muted" style="font-size:10px">Current SharePoint records</span></div><div id="snapshot-list"></div></div>
@@ -433,7 +440,38 @@ async function saveForklift(){
   }
 }
 
-function renderAll(){renderStats();renderAttention();renderSnapshot();renderFleet();}
+
+function renderLocationIssues(){
+  const panel=document.getElementById('location-issues-panel');
+  const list=document.getElementById('location-issues-list');
+  const count=document.getElementById('location-issues-count');
+  if(!panel||!list||!count)return;
+
+  const activeSet=new Set(activeWorkrooms);
+  const issues=fleet.filter(f=>f.workroom && !activeSet.has(String(f.workroom).trim()));
+
+  count.textContent=issues.length?`${issues.length} forklift${issues.length===1?'':'s'} need review`:'';
+  if(!issues.length){
+    panel.style.display='none';
+    list.innerHTML='';
+    return;
+  }
+
+  panel.style.display='';
+  list.innerHTML=issues.map(f=>`
+    <div class="alert-row" style="grid-template-columns:110px 1fr 1fr auto;cursor:pointer"
+         title="Open forklift"
+         ondblclick="openForkliftModal(${JSON.stringify(f.spId)})">
+      <div><strong>${esc(f.id||'')}</strong></div>
+      <div>${esc(f.workroom||'')}</div>
+      <div><span class="alert-pill pill-danger">Assigned location is inactive</span></div>
+      <div><button class="btn sm" onclick="openForkliftModal(${JSON.stringify(f.spId)});event.stopPropagation()">Review</button></div>
+    </div>
+  `).join('');
+}
+
+function renderAll(){
+  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();}
 function updateTopbarCount(){
   const active=fleet.filter(f=>!['Retired','Scrapped'].includes(f.status)).length;
   const inactive=fleet.filter(f=>['Retired','Scrapped'].includes(f.status)).length;
