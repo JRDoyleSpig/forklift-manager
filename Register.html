@@ -71,6 +71,41 @@ textarea.form-input{resize:vertical;min-height:72px}
 tr.fleet-row{cursor:pointer}
 tr.fleet-row:hover td{background:var(--accent-light)}
 
+
+/* ── TRANSACTIONS / AGING & GRADING PHASE ───────────────────────────── */
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin:10px 0 14px}
+.metric-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 11px}
+.metric-card .k{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+.metric-card .v{font:600 17px var(--mono)}
+.metric-card .sub{font-size:9px;color:var(--muted);margin-top:3px}
+.grade-badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
+.grade-excellent{background:var(--good-light);color:var(--good)}
+.grade-good{background:var(--accent-light);color:var(--accent)}
+.grade-watch{background:var(--warn-light);color:var(--warn)}
+.grade-replace{background:var(--danger-light);color:var(--danger)}
+.chart-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.chart-title{font-size:12px;font-weight:600;margin-bottom:11px}
+.bar-row{display:grid;grid-template-columns:120px 1fr 68px;gap:8px;align-items:center;margin:8px 0;font-size:10px}
+.bar-track{height:12px;background:var(--surface2);border-radius:6px;overflow:hidden}
+.bar-fill{height:100%;background:var(--accent-mid);border-radius:6px;min-width:2px}
+.bar-fill.warn{background:var(--warn)}.bar-fill.danger{background:var(--danger)}.bar-fill.good{background:var(--good)}
+.history-wrap{border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:300px}
+.history-wrap table{font-size:10px}.history-wrap th,.history-wrap td{padding:6px 7px}
+.import-modal .modal{width:min(1180px,98vw)}
+.import-table-wrap{max-height:58vh;overflow:auto;border:1px solid var(--border);border-radius:8px}
+.import-table{font-size:10px;min-width:1180px}
+.import-table th,.import-table td{padding:5px 6px}
+.import-input{border:1px solid var(--border);border-radius:4px;padding:4px 5px;font:10px var(--sans);background:var(--surface);color:var(--text);width:100%}
+.import-select{border:1px solid var(--border);border-radius:4px;padding:4px;font:10px var(--sans);background:var(--surface);color:var(--text)}
+.import-row-duplicate{opacity:.48;background:var(--surface2)}
+.import-row-unmatched{background:var(--warn-light)}
+.import-row-mismatch{box-shadow:inset 3px 0 0 var(--warn)}
+.vendor-warning{font-size:9px;color:var(--warn);line-height:1.3}.vendor-ok{font-size:9px;color:var(--good)}
+.import-summary{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:11px;margin-bottom:10px}
+.file-btn{position:relative;overflow:hidden}.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.ag-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:1050px){.ag-grid{grid-template-columns:1fr}.import-modal .modal{width:99vw}}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
 </head>
@@ -100,6 +135,10 @@ tr.fleet-row:hover td{background:var(--accent-light)}
       <div class="sidebar-section">History</div>
       <div class="nav-item" data-view="transactions" onclick="showView('transactions',this)">
         <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M3 2h10v12H3z"/><path d="M5 5h6M5 8h6M5 11h4"/></svg><span>Transactions</span>
+      </div>
+      <div class="sidebar-section">Analysis</div>
+      <div class="nav-item" data-view="aging" onclick="showView('aging',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M2 13h12M3 11V7h2v4M7 11V3h2v8M11 11V5h2v6"/></svg><span>Aging / Grading</span>
       </div>
       <div class="sidebar-section">Coming Later</div>
       <div class="nav-item" style="opacity:.45;cursor:default"><span>Replacement Planning</span></div>
@@ -139,16 +178,33 @@ tr.fleet-row:hover td{background:var(--accent-light)}
         <div class="section-header">
           <div>
             <div class="section-title">Forklift Transactions</div>
-            <div class="muted" style="font-size:11px;margin-top:3px">Read-only history from the Forklift Transactions SharePoint list</div>
+            <div class="muted" style="font-size:11px;margin-top:3px">Expense and service history from SharePoint</div>
           </div>
           <div class="section-actions">
-            <input id="tx-search" class="search-box" placeholder="Search forklift, workroom, invoice…" style="width:250px" oninput="renderTransactions()">
+            <label class="btn primary file-btn">Import NetSuite CSV<input type="file" id="netsuite-file" accept=".csv,text/csv" onchange="handleNetSuiteFile(this.files[0]);this.value=''"/></label>
+            <input id="tx-search" class="search-box" placeholder="Search forklift, workroom, invoice, vendor…" style="width:250px" oninput="renderTransactions()">
             <select id="tx-year-filter" class="search-box" onchange="renderTransactions()"><option value="">All years</option></select>
+            <select id="tx-category-filter" class="search-box" onchange="renderTransactions()"><option value="">All categories</option><option value="pm">PM Service</option><option value="repair">Repair / Expense</option></select>
             <select id="tx-service-filter" class="search-box" onchange="renderTransactions()"><option value="">All transactions</option><option value="yes">Service calls only</option><option value="no">Non-service calls</option></select>
           </div>
         </div>
         <div class="stats-row" id="tx-stats-row" style="margin-bottom:12px"></div>
         <div class="table-wrap"><table id="transactions-table"></table></div>
+      </section>
+
+      <section id="view-aging" class="hidden">
+        <div class="section-header" style="margin-bottom:10px">
+          <div><div class="section-title">Aging / Grading</div><div class="muted" style="font-size:11px;margin-top:3px">Current-year repair cost excludes PM; PM never counts as a service call</div></div>
+          <div class="section-actions"><input id="ag-search" class="search-box" placeholder="Search forklift or workroom…" style="width:230px" oninput="renderAging()"><select id="ag-grade-filter" class="search-box" onchange="renderAging()"><option value="">All grades</option><option>Excellent</option><option>Good</option><option>Watch</option><option>Replace Soon</option></select></div>
+        </div>
+        <div class="stats-row" id="ag-stats-row" style="margin-bottom:14px"></div>
+        <div class="ag-grid">
+          <div class="chart-panel"><div class="chart-title">Grade Distribution</div><div id="grade-chart"></div></div>
+          <div class="chart-panel"><div class="chart-title">Top 10 Repair Cost — Current Year</div><div id="repair-chart"></div></div>
+        </div>
+        <div class="panel" style="margin-bottom:14px"><div class="panel-head"><div class="panel-title">Needs Attention — Watch / Replace Soon</div><span class="muted" style="font-size:10px">Sorted by score, then repair spend</span></div><div style="overflow:auto;max-height:280px"><table id="ag-attention-table"></table></div></div>
+        <div class="section-header" style="margin-bottom:8px"><div class="section-title">Full Fleet Grading</div></div>
+        <div class="table-wrap"><table id="ag-table"></table></div>
       </section>
     </main>
   </div>
@@ -166,7 +222,7 @@ const TX_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Transactions')
 const TX_ITEMS_API=TX_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
 let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},activeWorkrooms=[],sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
-let transactions=[],txFieldMap={},txSortKey='transactionDate',txSortDir=-1,txLoadError='';
+let transactions=[],txFieldMap={},txFieldMeta={},txSortKey='transactionDate',txSortDir=-1,txLoadError='',importRows=[];
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -195,11 +251,11 @@ function num(v){if(v===null||v===undefined||v==='')return null;const n=Number(v)
 function choices(v){if(!v)return[];if(Array.isArray(v))return v; if(v.results&&Array.isArray(v.results))return v.results;return[String(v)];}
 
 async function loadTransactionFields(token){
-  const url=TX_LIST_API+"/fields?$select=Title,InternalName,Hidden,TypeAsString";
+  const url=TX_LIST_API+"/fields?$select=Title,InternalName,Hidden,TypeAsString,Required,Choices,FillInChoice";
   const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
   if(!r.ok)throw new Error('Could not read Forklift Transactions columns (HTTP '+r.status+').');
-  const data=await r.json();txFieldMap={};
-  data.d.results.forEach(f=>{if(!f.Hidden)txFieldMap[normalizeLabel(f.Title)]=f.InternalName;});
+  const data=await r.json();txFieldMap={};txFieldMeta={};
+  data.d.results.forEach(f=>{if(!f.Hidden){const k=normalizeLabel(f.Title);txFieldMap[k]=f.InternalName;txFieldMeta[k]=f;if(f.InternalName==='Title'){txFieldMap.transactionid='Title';txFieldMeta.transactionid=f;}}});
 }
 function txv(item,...labels){
   for(const label of labels){const internal=txFieldMap[normalizeLabel(label)];if(internal&&item[internal]!==undefined)return item[internal];}
@@ -216,7 +272,7 @@ function mapTransaction(i){
     invoiceNumber:String(txv(i,'Invoice Number')||''),
     category:String(txv(i,'Category')||''),
     amount:num(txv(i,'Amount')),
-    serviceCall:!!txv(i,'Service Call'),
+    serviceCall:(()=>{const v=txv(i,'Service Call');if(typeof v==='boolean')return v;const x=String(v??'').trim().toLowerCase();return ['y','yes','true','1'].includes(x);})(),
     hourMeter:num(txv(i,'Hour Meter')),
     description:String(txv(i,'Description')||''),
     notes:String(txv(i,'Notes')||''),
@@ -357,6 +413,49 @@ function renderFleet(){
 }
 function exportCSV(){if(!fleet.length){alert('There are no forklift records to export yet.');return;}const headers=COLS.map(c=>c[1]);const rows=fleet.map(f=>COLS.map(([k])=>{const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];return JSON.stringify(Array.isArray(v)?v.join('; '):(v??''));}).join(','));const csv=headers.join(',')+'\n'+rows.join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='forklift_fleet_'+new Date().toISOString().slice(0,10)+'.csv';a.click();}
 
+
+function txGroupKey(t){return `${t.forkliftId||''}|${t.invoiceNumber||''}|${t.transactionDate||''}`;}
+function pmGroupSet(){
+  const groups={};transactions.forEach(t=>{const k=txGroupKey(t);(groups[k]??=[]).push(t);});
+  const out=new Set();Object.entries(groups).forEach(([k,arr])=>{
+    const explicit=arr.some(t=>String(t.category||'').toLowerCase().includes('pm'));
+    const labor135=arr.some(t=>Math.abs(Number(t.amount||0)-135)<0.001);
+    const service=arr.some(t=>t.serviceCall);
+    if(explicit||(labor135&&!service))out.add(k);
+  });return out;
+}
+function isPM(t,pmSet=null){pmSet=pmSet||pmGroupSet();return String(t.category||'').toLowerCase().includes('pm')||String(t.notes||'').toLowerCase().includes('category: pm service')||pmSet.has(txGroupKey(t));}
+function effectiveCategory(t,pmSet=null){return isPM(t,pmSet)?'PM Service':(t.category||'Repair / Expense');}
+function txYear(t){return t.transactionDate?Number(t.transactionDate.slice(0,4)):null;}
+function currentYear(){return new Date().getFullYear();}
+function txForForklift(fid){return transactions.filter(t=>t.forkliftId===fid);}
+function pmExpectedAnnual(freq){
+  const s=String(freq||'').toLowerCase().replace(/[-–]/g,' ').trim();
+  if(!s)return null;if(s.includes('monthly'))return 12;if(s.includes('quarter'))return 4;
+  if(s.includes('4 month')||s.includes('four month'))return 3;
+  if(s.includes('biannual')||s.includes('bi annual')||s.includes('semiannual')||s.includes('semi annual')||s.includes('twice'))return 2;
+  if(s.includes('annual')||s.includes('year'))return 1;return null;
+}
+function pmExpectedToDate(freq){const n=pmExpectedAnnual(freq);if(!n)return null;const m=new Date().getMonth()+1;return Math.max(0,Math.floor((n*m)/12));}
+function forkliftMetrics(f){
+  const rows=txForForklift(f.id),pmSet=pmGroupSet(),cy=currentYear();
+  const years={};let lifetime=0,repairYTD=0,serviceYTD=0,pmSpendYTD=0,pmCountYTD=0;
+  const pmInvoices=new Set();
+  rows.forEach(t=>{const a=Number(t.amount||0),y=txYear(t);lifetime+=a;if(y)years[y]=(years[y]||0)+a;if(y===cy){
+    if(isPM(t,pmSet)){pmSpendYTD+=a;pmInvoices.add(txGroupKey(t));}
+    else{repairYTD+=a;if(t.serviceCall)serviceYTD++;}
+  }});pmCountYTD=pmInvoices.size;
+  return {rows,years,lifetime,repairYTD,serviceYTD,pmSpendYTD,pmCountYTD,pmExpected:pmExpectedAnnual(f.pmFrequency),pmExpectedToDate:pmExpectedToDate(f.pmFrequency)};
+}
+function repairCostScore(v){v=Number(v||0);if(v<=0)return 0;if(v<1000)return 1;if(v<2000)return 2;if(v<5000)return 3;return 4;}
+function serviceCallScore(v){v=Number(v||0);if(v<=0)return 0;if(v<=2)return 1;if(v<=4)return 2;if(v<=6)return 3;return 4;}
+function hoursScore(v){v=Number(v||0);if(v<2500)return 1;if(v<6000)return 2;if(v<9000)return 3;return 4;}
+function gradeFromScore(s){if(s<=3)return'Excellent';if(s<=6)return'Good';if(s<=9)return'Watch';return'Replace Soon';}
+function gradeClass(g){return g==='Excellent'?'grade-excellent':g==='Good'?'grade-good':g==='Watch'?'grade-watch':'grade-replace';}
+function gradingRow(f){const m=forkliftMetrics(f);const rs=repairCostScore(m.repairYTD),ss=serviceCallScore(m.serviceYTD),hs=hoursScore(f.hours),score=rs+ss+hs;return {f,m,rs,ss,hs,score,grade:gradeFromScore(score)};}
+function vendorNorm(v){return String(v||'').toLowerCase().replace(/\b(incorporated|inc|llc|ltd|company|co|corp|corporation|equipment|lift trucks?|services?)\b/g,'').replace(/[^a-z0-9]/g,'');}
+function vendorMatches(a,b){const x=vendorNorm(a),y=vendorNorm(b);return !!x&&!!y&&(x===y||x.includes(y)||y.includes(x));}
+
 function fmtMoney(v){const n=Number(v||0);return n.toLocaleString('en-US',{style:'currency',currency:'USD'});}
 function setTxSort(k){if(txSortKey===k)txSortDir*=-1;else{txSortKey=k;txSortDir=1;}renderTransactions();}
 function txSortValue(t,k){const v=t[k];if(k==='amount'||k==='hourMeter')return Number(v||0);if(k==='forkliftId'){const m=String(v||'').match(/^#(\d+)$/);return m?Number(m[1]):999999;}return String(v||'').toLowerCase();}
@@ -379,24 +478,82 @@ function renderTxStats(rows){
 function renderTransactions(){
   const table=document.getElementById('transactions-table');if(!table)return;
   if(txLoadError){table.innerHTML=`<tbody><tr><td class="empty">${esc(txLoadError)}</td></tr></tbody>`;document.getElementById('tx-stats-row').innerHTML='';return;}
-  populateTxYearFilter();
+  populateTxYearFilter();const pmSet=pmGroupSet();
   const q=(document.getElementById('tx-search')?.value||'').toLowerCase();
-  const year=document.getElementById('tx-year-filter')?.value||'';
-  const service=document.getElementById('tx-service-filter')?.value||'';
+  const year=document.getElementById('tx-year-filter')?.value||'',service=document.getElementById('tx-service-filter')?.value||'',cat=document.getElementById('tx-category-filter')?.value||'';
   let rows=transactions.filter(t=>{
     if(year&&(!t.transactionDate||!t.transactionDate.startsWith(year)))return false;
-    if(service==='yes'&&!t.serviceCall)return false;
-    if(service==='no'&&t.serviceCall)return false;
-    if(q&&!`${t.forkliftId} ${t.workroom} ${t.invoiceNumber} ${t.vendor} ${t.category} ${t.description} ${t.notes}`.toLowerCase().includes(q))return false;
-    return true;
+    if(service==='yes'&&(!t.serviceCall||isPM(t,pmSet)))return false;if(service==='no'&&t.serviceCall&&!isPM(t,pmSet))return false;
+    if(cat==='pm'&&!isPM(t,pmSet))return false;if(cat==='repair'&&isPM(t,pmSet))return false;
+    if(q&&!`${t.forkliftId} ${t.workroom} ${t.invoiceNumber} ${t.vendor} ${effectiveCategory(t,pmSet)} ${t.description} ${t.notes}`.toLowerCase().includes(q))return false;return true;
   });
-  rows.sort((a,b)=>{const av=txSortValue(a,txSortKey),bv=txSortValue(b,txSortKey);return av<bv?-txSortDir:av>bv?txSortDir:0;});
-  renderTxStats(rows);
+  rows.sort((a,b)=>{const av=txSortValue(a,txSortKey),bv=txSortValue(b,txSortKey);return av<bv?-txSortDir:av>bv?txSortDir:0;});renderTxStats(rows);
   const cols=[['transactionDate','Date'],['forkliftId','Forklift ID'],['workroom','Workroom'],['invoiceNumber','Invoice Number'],['amount','Amount'],['serviceCall','Service Call'],['vendor','Vendor'],['category','Category'],['hourMeter','Hour Meter'],['description','Description'],['notes','Notes']];
   const head='<thead><tr>'+cols.map(([k,l])=>`<th class="sort ${txSortKey===k?(txSortDir===1?'asc':'desc'):''}" onclick="setTxSort('${k}')">${l}</th>`).join('')+'</tr></thead>';
-  const body=rows.map(t=>'<tr>'+cols.map(([k])=>{let v=t[k];if(k==='transactionDate')v=fmtDate(v);else if(k==='amount')v=fmtMoney(v);else if(k==='serviceCall')v=v?'✓':'—';else if(k==='hourMeter')v=(v===null||v===undefined)?'—':fmtNum(v);else v=v||'—';const cls=['forkliftId','amount','hourMeter'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
+  const body=rows.map(t=>'<tr>'+cols.map(([k])=>{let v=t[k];if(k==='transactionDate')v=fmtDate(v);else if(k==='amount')v=fmtMoney(v);else if(k==='serviceCall')v=(t.serviceCall&&!isPM(t,pmSet))?'✓':'—';else if(k==='category')v=effectiveCategory(t,pmSet);else if(k==='hourMeter')v=(v===null||v===undefined)?'—':fmtNum(v);else v=v||'—';const cls=['forkliftId','amount','hourMeter'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
   table.innerHTML=head+'<tbody>'+body+(rows.length?'':'<tr><td colspan="11" class="empty">No transactions match</td></tr>')+'</tbody>';
 }
+
+function renderForkliftHistory(f){
+  const wrap=document.getElementById('ff-history-section');if(!wrap)return;if(!f){wrap.style.display='none';return;}wrap.style.display='block';
+  const m=forkliftMetrics(f),pmSet=pmGroupSet(),years=Object.entries(m.years).sort((a,b)=>Number(a[0])-Number(b[0]));
+  const yrCards=years.map(([y,v])=>`<div class="metric-card"><div class="k">${y} Expense</div><div class="v">${fmtMoney(v)}</div></div>`).join('');
+  const expected=m.pmExpected==null?'—':m.pmExpected;const pace=m.pmExpectedToDate==null?'':(m.pmCountYTD>=m.pmExpectedToDate?'On pace':'Behind pace');
+  document.getElementById('ff-history-metrics').innerHTML=yrCards+`
+    <div class="metric-card"><div class="k">Lifetime Expense</div><div class="v">${fmtMoney(m.lifetime)}</div></div>
+    <div class="metric-card"><div class="k">Repair Expense YTD</div><div class="v">${fmtMoney(m.repairYTD)}</div><div class="sub">PM excluded</div></div>
+    <div class="metric-card"><div class="k">Service Calls YTD</div><div class="v">${m.serviceYTD}</div><div class="sub">PM excluded</div></div>
+    <div class="metric-card"><div class="k">PM Spend YTD</div><div class="v">${fmtMoney(m.pmSpendYTD)}</div></div>
+    <div class="metric-card"><div class="k">PM Count YTD</div><div class="v">${m.pmCountYTD} / ${expected}</div><div class="sub">${esc(f.pmFrequency||'Frequency not set')}${pace?' · '+pace:''}</div></div>`;
+  const rows=[...m.rows].sort((a,b)=>(b.transactionDate||'').localeCompare(a.transactionDate||'')||b.spId-a.spId);
+  const cols=['Date','Vendor','Invoice #','Category','Amount','Service Call','Workroom','Notes'];
+  document.getElementById('ff-history-table').innerHTML='<thead><tr>'+cols.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>'+rows.map(t=>`<tr><td>${fmtDate(t.transactionDate)}</td><td>${esc(t.vendor||'—')}</td><td class="mono">${esc(t.invoiceNumber||'—')}</td><td>${esc(effectiveCategory(t,pmSet))}</td><td class="mono">${fmtMoney(t.amount)}</td><td>${t.serviceCall&&!isPM(t,pmSet)?'✓':'—'}</td><td>${esc(t.workroom||'—')}</td><td>${esc(t.notes||t.description||'—')}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="8" class="empty">No transaction history</td></tr>')+'</tbody>';
+}
+
+function renderAging(){
+  const rows=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).map(gradingRow);
+  const q=(document.getElementById('ag-search')?.value||'').toLowerCase(),gf=document.getElementById('ag-grade-filter')?.value||'';
+  const filtered=rows.filter(r=>(!gf||r.grade===gf)&&(!q||`${r.f.id} ${r.f.workroom} ${r.f.manufacturer} ${r.f.model}`.toLowerCase().includes(q)));
+  const counts={Excellent:0,Good:0,Watch:0,'Replace Soon':0};rows.forEach(r=>counts[r.grade]++);
+  const totalRepair=rows.reduce((s,r)=>s+r.m.repairYTD,0);const withFreq=rows.filter(r=>r.m.pmExpectedToDate!=null),compliant=withFreq.filter(r=>r.m.pmCountYTD>=r.m.pmExpectedToDate).length;
+  document.getElementById('ag-stats-row').innerHTML=`<div class="stat-card good"><div class="stat-label">Excellent</div><div class="stat-value">${counts.Excellent}</div></div><div class="stat-card accent"><div class="stat-label">Good</div><div class="stat-value">${counts.Good}</div></div><div class="stat-card warn"><div class="stat-label">Watch</div><div class="stat-value">${counts.Watch}</div></div><div class="stat-card danger"><div class="stat-label">Replace Soon</div><div class="stat-value">${counts['Replace Soon']}</div></div><div class="stat-card"><div class="stat-label">YTD Repair Spend</div><div class="stat-value" style="font-size:20px">${fmtMoney(totalRepair)}</div><div class="stat-sub">PM excluded</div></div><div class="stat-card"><div class="stat-label">PM Compliance</div><div class="stat-value">${withFreq.length?Math.round(compliant/withFreq.length*100):0}%</div><div class="stat-sub">On pace among units with frequency</div></div>`;
+  const maxCount=Math.max(...Object.values(counts),1);document.getElementById('grade-chart').innerHTML=Object.entries(counts).map(([g,c])=>`<div class="bar-row"><span>${g}</span><div class="bar-track"><div class="bar-fill ${g==='Replace Soon'?'danger':g==='Watch'?'warn':g==='Excellent'?'good':''}" style="width:${c/maxCount*100}%"></div></div><span class="mono">${c}</span></div>`).join('');
+  const top=[...rows].sort((a,b)=>b.m.repairYTD-a.m.repairYTD).slice(0,10),maxRepair=Math.max(...top.map(r=>Math.max(r.m.repairYTD,0)),1);document.getElementById('repair-chart').innerHTML=top.map(r=>`<div class="bar-row"><span>${esc(r.f.id)} · ${esc(r.f.workroom||'')}</span><div class="bar-track"><div class="bar-fill ${r.m.repairYTD>=5000?'danger':r.m.repairYTD>=2000?'warn':''}" style="width:${Math.max(r.m.repairYTD,0)/maxRepair*100}%"></div></div><span class="mono">${fmtMoney(r.m.repairYTD)}</span></div>`).join('');
+  const cols=['Forklift','Workroom','Hours','Repair Cost YTD','Service Calls','PM Count / Expected','Score','Grade'];
+  const tr=r=>`<tr class="fleet-row" ondblclick="openForkliftModal(${r.f.spId})"><td class="mono"><strong>${esc(r.f.id)}</strong></td><td>${esc(r.f.workroom||'—')}</td><td class="mono">${fmtNum(r.f.hours)}</td><td class="mono">${fmtMoney(r.m.repairYTD)}</td><td class="mono">${r.m.serviceYTD}</td><td class="mono">${r.m.pmCountYTD} / ${r.m.pmExpected??'—'}</td><td class="mono">${r.score}</td><td><span class="grade-badge ${gradeClass(r.grade)}">${r.grade}</span></td></tr>`;
+  const att=rows.filter(r=>r.grade==='Watch'||r.grade==='Replace Soon').sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD);
+  document.getElementById('ag-attention-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+att.map(tr).join('')+(att.length?'':'<tr><td colspan="8" class="empty">No Watch / Replace Soon units</td></tr>')+'</tbody>';
+  document.getElementById('ag-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+filtered.sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD).map(tr).join('')+'</tbody>';
+}
+
+function parseCSV(text){
+  const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];if(q){if(c==='"'&&n==='"'){cell+='"';i++;}else if(c==='"')q=false;else cell+=c;}else{if(c==='"')q=true;else if(c===','){row.push(cell);cell='';}else if(c==='\n'){row.push(cell.replace(/\r$/,''));rows.push(row);row=[];cell='';}else cell+=c;}}if(cell.length||row.length){row.push(cell.replace(/\r$/,''));rows.push(row);}return rows;
+}
+function csvObjects(text){const a=parseCSV(text.replace(/^\uFEFF/,''));if(!a.length)return[];const h=a[0].map(x=>x.trim());return a.slice(1).filter(r=>r.some(x=>String(x).trim())).map(r=>Object.fromEntries(h.map((k,i)=>[k,r[i]??''])));}
+function nsDateISO(v){const m=String(v||'').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);return m?`${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`:'';}
+function importBaseKey(r){return `${r.transactionDate}|${r.forkliftId}|${r.invoiceNumber}|${Number(r.amount||0).toFixed(2)}|${r.workroom}`;}
+function importTxId(r,occ){const d=(r.transactionDate||'').replaceAll('-','');const fid=(r.forkliftId||'UNASSIGNED').replace('#','F');const doc=String(r.invoiceNumber||'NODOC').replace(/[^A-Za-z0-9]/g,'').slice(-18);return `NS-${d}-${doc}-${fid}-${String(occ).padStart(2,'0')}`;}
+async function handleNetSuiteFile(file){if(!file)return;try{const text=await file.text(),objs=csvObjects(text);if(!objs.length)throw new Error('CSV appears empty.');
+  const required=['Date','Document Number','Memo','Amount','Workroom'];const missing=required.filter(k=>!(k in objs[0]));if(missing.length)throw new Error('Missing NetSuite columns: '+missing.join(', '));
+  const base=objs.map((o,i)=>{const memo=String(o['Memo']||'').trim(),m=memo.match(/#\d+/);return {sourceIndex:i+1,transactionDate:nsDateISO(o['Date']),forkliftId:m?m[0]:'',workroom:String(o['Workroom (no hierarchy)']||o['Workroom']||'').trim(),invoiceNumber:String(o['Document Number']||'').trim(),amount:Number(String(o['Amount']||'0').replace(/[$,]/g,''))||0,vendor:String(o['Name']||'').trim(),memo,category:'Repair / Expense',serviceCall:false,updatePrimary:false,vendorPhone:''};});
+  const groups={};base.forEach(r=>(groups[`${r.forkliftId}|${r.invoiceNumber}|${r.transactionDate}`]??=[]).push(r));Object.values(groups).forEach(arr=>{if(arr.some(r=>Math.abs(r.amount-135)<.001)){arr.forEach(r=>{r.category='PM Service';r.serviceCall=false;});}});
+  const occ={};base.forEach(r=>{const k=importBaseKey(r);occ[k]=(occ[k]||0)+1;r.transactionId=importTxId(r,occ[k]);r.duplicate=transactions.some(t=>t.transactionId===r.transactionId);});importRows=base;renderImportPreview();document.getElementById('import-modal').classList.add('open');
+}catch(e){alert('Could not read NetSuite CSV: '+e.message);}}
+function renderImportPreview(){const tbody=document.getElementById('import-preview-body');if(!tbody)return;let unmatched=0,dupes=0,mismatch=0;tbody.innerHTML=importRows.map((r,i)=>{const f=fleet.find(x=>x.id===r.forkliftId);if(!f)unmatched++;if(r.duplicate)dupes++;const vm=!!(f&&r.vendor&&f.serviceVendor&&!vendorMatches(r.vendor,f.serviceVendor));if(vm)mismatch++;const vb=f?(r.vendor?(f.serviceVendor?(vendorMatches(r.vendor,f.serviceVendor)?`<div class="vendor-ok">Matches ${esc(f.serviceVendor)}</div>`:`<div class="vendor-warning">Primary: ${esc(f.serviceVendor)}</div><label style="font-size:9px"><input type="checkbox" ${r.updatePrimary?'checked':''} onchange="importRows[${i}].updatePrimary=this.checked;renderImportPreview()"> Set imported vendor as primary</label>${r.updatePrimary?`<input class="import-input" placeholder="Vendor phone" value="${esc(r.vendorPhone||'')}" oninput="importRows[${i}].vendorPhone=this.value">`:''}`):`<div class="vendor-warning">No primary vendor set</div><label style="font-size:9px"><input type="checkbox" ${r.updatePrimary?'checked':''} onchange="importRows[${i}].updatePrimary=this.checked;renderImportPreview()"> Set as primary</label>${r.updatePrimary?`<input class="import-input" placeholder="Vendor phone" value="${esc(r.vendorPhone||'')}" oninput="importRows[${i}].vendorPhone=this.value">`:''}`):'<div class="muted" style="font-size:9px">Enter vendor to compare</div>'):'<div class="vendor-warning">Forklift not matched</div>';
+    return `<tr class="${r.duplicate?'import-row-duplicate ':''}${!f?'import-row-unmatched ':''}${vm?'import-row-mismatch':''}"><td>${r.duplicate?'Skip':'Import'}</td><td>${fmtDate(r.transactionDate)}</td><td class="mono">${esc(r.forkliftId||'—')}</td><td>${esc(r.workroom)}</td><td class="mono">${esc(r.invoiceNumber)}</td><td class="mono">${fmtMoney(r.amount)}</td><td><input class="import-input" value="${esc(r.vendor)}" onchange="importRows[${i}].vendor=this.value;renderImportPreview()"></td><td><select class="import-select" onchange="importRows[${i}].category=this.value;if(this.value==='PM Service')importRows[${i}].serviceCall=false;renderImportPreview()"><option ${r.category==='Repair / Expense'?'selected':''}>Repair / Expense</option><option ${r.category==='PM Service'?'selected':''}>PM Service</option></select></td><td style="text-align:center"><input type="checkbox" ${r.serviceCall?'checked':''} ${r.category==='PM Service'?'disabled':''} onchange="importRows[${i}].serviceCall=this.checked"></td><td>${vb}</td></tr>`;}).join('');
+  document.getElementById('import-summary').innerHTML=`<strong>${importRows.length}</strong> CSV lines · <strong>${dupes}</strong> already imported / will skip · <strong>${unmatched}</strong> unmatched forklift IDs · <strong>${mismatch}</strong> vendor mismatches`;
+}
+function closeImportModal(){document.getElementById('import-modal').classList.remove('open');importRows=[];}
+function txMeta(...labels){for(const l of labels){const x=txFieldMeta[normalizeLabel(l)];if(x)return x;}return null;}
+function txInternal(...labels){for(const l of labels){const x=txFieldMap[normalizeLabel(l)];if(x)return x;}return null;}
+function assignTx(body,label,value){const meta=txMeta(label),internal=txInternal(label);if(!internal||value===undefined||value===null||value==='')return;if(meta?.TypeAsString==='Boolean')body[internal]=!!value;else if(['Number','Currency'].includes(meta?.TypeAsString))body[internal]=Number(value);else if(meta?.TypeAsString==='Choice'){const choices=meta.Choices?.results||[];let candidates=[String(value)];if(typeof value==='boolean')candidates=value?['Y','Yes','True','TRUE']:['N','No','False','FALSE'];const exact=choices.find(x=>candidates.some(c=>String(x).toLowerCase()===String(c).toLowerCase()));if(exact)body[internal]=exact;else if(meta.FillInChoice)body[internal]=typeof value==='boolean'?(value?'Y':'N'):String(value);}else body[internal]=String(value);}
+async function importNetSuiteRows(){const pending=importRows.filter(r=>!r.duplicate);if(!pending.length){alert('Nothing new to import.');return;}const unmatched=pending.filter(r=>!r.forkliftId||!fleet.some(f=>f.id===r.forkliftId));if(unmatched.length&&!confirm(`${unmatched.length} rows do not match a Forklift ID. Import them anyway with a blank/unmatched Forklift ID?`))return;if(!confirm(`Import ${pending.length} new NetSuite transaction lines into SharePoint?`))return;
+  const btn=document.getElementById('import-save-btn');btn.disabled=true;btn.textContent='Importing…';try{const token=await getToken();const li=await fetch(TX_LIST_API+'?$select=ListItemEntityTypeFullName',{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}}).then(r=>r.json()),etype=li.d.ListItemEntityTypeFullName;let created=0,failed=[];
+    for(const r of pending){const body={__metadata:{type:etype},Title:r.transactionId};assignTx(body,'Forklift ID',r.forkliftId);assignTx(body,'Transaction Date',r.transactionDate+'T12:00:00Z');assignTx(body,'Workroom',r.workroom);assignTx(body,'Invoice Number',r.invoiceNumber);assignTx(body,'Amount',r.amount);assignTx(body,'Vendor',r.vendor);assignTx(body,'Category',r.category);assignTx(body,'Service Call',r.category==='PM Service'?false:r.serviceCall);assignTx(body,'Notes',[r.memo?`NetSuite Memo: ${r.memo}`:'',`Category: ${r.category}`].filter(Boolean).join(' | '));const resp=await fetch(TX_ITEMS_API,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(resp.ok)created++;else failed.push({id:r.transactionId,error:await resp.text()});}
+    const fleetEntityType=await getListItemType(token);const updates={};pending.filter(r=>r.updatePrimary&&r.forkliftId&&r.vendor).forEach(r=>updates[r.forkliftId]={vendor:r.vendor,phone:r.vendorPhone});for(const [fid,u] of Object.entries(updates)){const f=fleet.find(x=>x.id===fid);if(!f)continue;const body={__metadata:{type:fleetEntityType}};const vi=fieldMap[normalizeLabel('Primary Service Vendor')],pi=fieldMap[normalizeLabel('Primary Service Vendor Phone')];if(vi)body[vi]=u.vendor;if(pi&&u.phone)body[pi]=u.phone;const rr=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!rr.ok)console.error('Vendor update failed for',fid,await rr.text());}
+    if(failed.length){console.table(failed);alert(`Imported ${created}. ${failed.length} failed — see Console.`);}else alert(`Imported ${created} NetSuite transaction lines successfully.`);closeImportModal();tokenCache=null;await loadData(true);
+  }catch(e){console.error(e);alert('Import failed: '+e.message);}finally{btn.disabled=false;btn.textContent='Import Transactions';}}
+
 
 function formVal(id){return document.getElementById(id)?.value??'';}
 function setFormVal(id,v){const e=document.getElementById(id);if(e)e.value=(v===null||v===undefined)?'':v;}
@@ -435,6 +592,7 @@ function openForkliftModal(spId){
   setFormVal('ff-lastpm',f?.lastPM||'');
   setFormVal('ff-nextpm',f?.nextPM||'');
   setFormVal('ff-notes',f?.notes||'');
+  renderForkliftHistory(f);
 
   document.getElementById('forklift-modal').classList.add('open');
 }
@@ -601,7 +759,7 @@ function renderLocationIssues(){
 }
 
 function renderAll(){
-  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();}
+  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();renderAging();}
 function updateTopbarCount(){
   const active=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).length;
   const inactive=fleet.filter(f=>['Retired','Scrapped','Sold'].includes(f.status)).length;
@@ -628,7 +786,7 @@ function showFleetScope(scope,el){
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
-function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();}
+function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.getElementById('view-aging').classList.toggle('hidden',name!=='aging');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='aging')renderAging();}
 
 window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
 </script>
@@ -687,6 +845,12 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
         <div class="form-group"><label class="form-label">Next PM Due</label><input class="form-input" type="date" id="ff-nextpm"></div>
       </div>
 
+      <div id="ff-history-section" style="display:none">
+        <div class="form-section">Expense / Service History</div>
+        <div class="metric-grid" id="ff-history-metrics"></div>
+        <div class="history-wrap"><table id="ff-history-table"></table></div>
+      </div>
+
       <div class="form-section">Notes</div>
       <div class="form-grid">
         <div class="form-group full"><textarea class="form-input" id="ff-notes"></textarea></div>
@@ -696,6 +860,15 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
       <button class="btn" onclick="closeForkliftModal()">Cancel</button>
       <button class="btn primary" id="forklift-save-btn" onclick="saveForklift()">Save Forklift</button>
     </div>
+  </div>
+</div>
+
+
+<div class="modal-backdrop import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal">
+    <div class="modal-head"><div><div class="modal-title">Review NetSuite Transactions</div><div class="muted" style="font-size:10px;margin-top:3px">PMs are suggested from the $135 labor pattern. Review Category and Service Call before importing.</div></div><button class="modal-close" onclick="closeImportModal()">×</button></div>
+    <div class="modal-body"><div class="import-summary" id="import-summary"></div><div class="import-table-wrap"><table class="import-table"><thead><tr><th>Status</th><th>Date</th><th>Forklift</th><th>Workroom</th><th>Document #</th><th>Amount</th><th>Vendor</th><th>Category</th><th>Service Call</th><th>Primary Vendor Review</th></tr></thead><tbody id="import-preview-body"></tbody></table></div></div>
+    <div class="modal-foot"><button class="btn" onclick="closeImportModal()">Cancel</button><button class="btn primary" id="import-save-btn" onclick="importNetSuiteRows()">Import Transactions</button></div>
   </div>
 </div>
 
