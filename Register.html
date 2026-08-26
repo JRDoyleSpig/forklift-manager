@@ -97,8 +97,11 @@ tr.fleet-row:hover td{background:var(--accent-light)}
       <div class="nav-item" data-view="fleet" data-fleet-scope="inactive" onclick="showFleetScope('inactive',this)">
         <span style="width:16px;text-align:center;color:#888">●</span><span>Inactive Forklifts</span>
       </div>
+      <div class="sidebar-section">History</div>
+      <div class="nav-item" data-view="transactions" onclick="showView('transactions',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M3 2h10v12H3z"/><path d="M5 5h6M5 8h6M5 11h4"/></svg><span>Transactions</span>
+      </div>
       <div class="sidebar-section">Coming Later</div>
-      <div class="nav-item" style="opacity:.45;cursor:default"><span>Transactions</span></div>
       <div class="nav-item" style="opacity:.45;cursor:default"><span>Replacement Planning</span></div>
     </aside>
     <main class="content">
@@ -131,6 +134,22 @@ tr.fleet-row:hover td{background:var(--accent-light)}
         </div>
         <div class="table-wrap"><table id="fleet-table"></table></div>
       </section>
+
+      <section id="view-transactions" class="hidden">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Forklift Transactions</div>
+            <div class="muted" style="font-size:11px;margin-top:3px">Read-only history from the Forklift Transactions SharePoint list</div>
+          </div>
+          <div class="section-actions">
+            <input id="tx-search" class="search-box" placeholder="Search forklift, workroom, invoice…" style="width:250px" oninput="renderTransactions()">
+            <select id="tx-year-filter" class="search-box" onchange="renderTransactions()"><option value="">All years</option></select>
+            <select id="tx-service-filter" class="search-box" onchange="renderTransactions()"><option value="">All transactions</option><option value="yes">Service calls only</option><option value="no">Non-service calls</option></select>
+          </div>
+        </div>
+        <div class="stats-row" id="tx-stats-row" style="margin-bottom:12px"></div>
+        <div class="table-wrap"><table id="transactions-table"></table></div>
+      </section>
     </main>
   </div>
 </div>
@@ -143,8 +162,11 @@ const SP_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Fleet')";
 const SP_ITEMS_API=SP_LIST_API+"/items";
 const LEASE_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Lease%20Manager')";
 const LEASE_ITEMS_API=LEASE_LIST_API+"/items";
+const TX_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Transactions')";
+const TX_ITEMS_API=TX_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
 let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},activeWorkrooms=[],sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
+let transactions=[],txFieldMap={},txSortKey='transactionDate',txSortDir=-1,txLoadError='';
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -171,6 +193,51 @@ function iv(item,label){const internal=fieldMap[normalizeLabel(label)];return in
 function dateOnly(v){return v?String(v).substring(0,10):'';}
 function num(v){if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
 function choices(v){if(!v)return[];if(Array.isArray(v))return v; if(v.results&&Array.isArray(v.results))return v.results;return[String(v)];}
+
+async function loadTransactionFields(token){
+  const url=TX_LIST_API+"/fields?$select=Title,InternalName,Hidden,TypeAsString";
+  const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Could not read Forklift Transactions columns (HTTP '+r.status+').');
+  const data=await r.json();txFieldMap={};
+  data.d.results.forEach(f=>{if(!f.Hidden)txFieldMap[normalizeLabel(f.Title)]=f.InternalName;});
+}
+function txv(item,...labels){
+  for(const label of labels){const internal=txFieldMap[normalizeLabel(label)];if(internal&&item[internal]!==undefined)return item[internal];}
+  return undefined;
+}
+function mapTransaction(i){
+  const d=txv(i,'Transaction Date');
+  return {
+    spId:i.Id,
+    transactionId:String(i.Title||''),
+    forkliftId:String(txv(i,'Forklift ID')||''),
+    transactionDate:dateOnly(d),
+    vendor:String(txv(i,'Vendor')||''),
+    invoiceNumber:String(txv(i,'Invoice Number')||''),
+    category:String(txv(i,'Category')||''),
+    amount:num(txv(i,'Amount')),
+    serviceCall:!!txv(i,'Service Call'),
+    hourMeter:num(txv(i,'Hour Meter')),
+    description:String(txv(i,'Description')||''),
+    notes:String(txv(i,'Notes')||''),
+    workroom:String(txv(i,'Workroom')||'')
+  };
+}
+async function loadTransactions(token){
+  txLoadError='';transactions=[];
+  try{
+    await loadTransactionFields(token);
+    let url=TX_ITEMS_API+"?$select=*&$top=5000&$orderby=Id",all=[];
+    while(url){
+      const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
+      if(!r.ok)throw new Error('Could not read Forklift Transactions (HTTP '+r.status+').');
+      const d=await r.json();all=all.concat(d.d.results);url=d.d.__next||null;
+    }
+    transactions=all.map(mapTransaction);
+  }catch(err){
+    console.error(err);txLoadError=err.message||String(err);
+  }
+}
 
 async function loadActiveWorkrooms(token){
   // Lease Manager source of truth:
@@ -216,11 +283,12 @@ async function loadData(force=false){
     const token=await getToken();
     await loadFields(token);
     await loadActiveWorkrooms(token);
+    await loadTransactions(token);
     let url=SP_ITEMS_API+"?$select=*&$top=500&$orderby=Id",all=[];
     while(url){const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read Forklift Fleet (HTTP '+r.status+').');const d=await r.json();all=all.concat(d.d.results);url=d.d.__next||null;}
     fleet=all.map(mapItem);
     updateTopbarCount();
-    setConnection('ok',`Connected — Forklift Fleet + ${activeWorkrooms.length} Active Lease Manager locations`);renderAll();
+    setConnection('ok',`Connected — Forklift Fleet + ${activeWorkrooms.length} Active Lease Manager locations + ${transactions.length} Transactions`);renderAll();
   }catch(err){console.error(err);setConnection('bad','SharePoint connection failed');showError(err.message+' If the Lease Manager still works, confirm the list is named exactly “Forklift Fleet” and that you have access to it.');}
 }
 
@@ -288,6 +356,47 @@ function renderFleet(){
   document.getElementById('fleet-table').innerHTML=head+'<tbody>'+body+(rows.length?'':`<tr><td colspan="${COLS.length}" class="empty">No forklifts match</td></tr>` )+'</tbody>';
 }
 function exportCSV(){if(!fleet.length){alert('There are no forklift records to export yet.');return;}const headers=COLS.map(c=>c[1]);const rows=fleet.map(f=>COLS.map(([k])=>{const v=k==='netsuiteMemo'?netSuiteMemo(f):f[k];return JSON.stringify(Array.isArray(v)?v.join('; '):(v??''));}).join(','));const csv=headers.join(',')+'\n'+rows.join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='forklift_fleet_'+new Date().toISOString().slice(0,10)+'.csv';a.click();}
+
+function fmtMoney(v){const n=Number(v||0);return n.toLocaleString('en-US',{style:'currency',currency:'USD'});}
+function setTxSort(k){if(txSortKey===k)txSortDir*=-1;else{txSortKey=k;txSortDir=1;}renderTransactions();}
+function txSortValue(t,k){const v=t[k];if(k==='amount'||k==='hourMeter')return Number(v||0);if(k==='forkliftId'){const m=String(v||'').match(/^#(\d+)$/);return m?Number(m[1]):999999;}return String(v||'').toLowerCase();}
+function populateTxYearFilter(){
+  const el=document.getElementById('tx-year-filter');if(!el)return;
+  const current=el.value;
+  const years=[...new Set(transactions.map(t=>t.transactionDate?t.transactionDate.slice(0,4):'').filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+  el.innerHTML='<option value="">All years</option>'+years.map(y=>`<option value="${y}"${y===current?' selected':''}>${y}</option>`).join('');
+}
+function renderTxStats(rows){
+  const el=document.getElementById('tx-stats-row');if(!el)return;
+  const total=rows.reduce((s,t)=>s+(Number(t.amount)||0),0);
+  const yearly={};rows.forEach(t=>{const y=t.transactionDate?t.transactionDate.slice(0,4):'Undated';yearly[y]=(yearly[y]||0)+(Number(t.amount)||0);});
+  const yearCards=Object.entries(yearly).filter(([y])=>y!=='Undated').sort((a,b)=>b[0].localeCompare(a[0])).slice(0,4);
+  const cards=[`<div class="stat-card accent"><div class="stat-label">Transactions</div><div class="stat-value">${rows.length}</div><div class="stat-sub">Current filtered view</div></div>`,
+    `<div class="stat-card"><div class="stat-label">Running Expense</div><div class="stat-value" style="font-size:20px">${fmtMoney(total)}</div><div class="stat-sub">Current filtered view</div></div>`];
+  yearCards.forEach(([y,v])=>cards.push(`<div class="stat-card"><div class="stat-label">${y} Expense</div><div class="stat-value" style="font-size:20px">${fmtMoney(v)}</div><div class="stat-sub">Transactions dated ${y}</div></div>`));
+  el.innerHTML=cards.join('');
+}
+function renderTransactions(){
+  const table=document.getElementById('transactions-table');if(!table)return;
+  if(txLoadError){table.innerHTML=`<tbody><tr><td class="empty">${esc(txLoadError)}</td></tr></tbody>`;document.getElementById('tx-stats-row').innerHTML='';return;}
+  populateTxYearFilter();
+  const q=(document.getElementById('tx-search')?.value||'').toLowerCase();
+  const year=document.getElementById('tx-year-filter')?.value||'';
+  const service=document.getElementById('tx-service-filter')?.value||'';
+  let rows=transactions.filter(t=>{
+    if(year&&(!t.transactionDate||!t.transactionDate.startsWith(year)))return false;
+    if(service==='yes'&&!t.serviceCall)return false;
+    if(service==='no'&&t.serviceCall)return false;
+    if(q&&!`${t.forkliftId} ${t.workroom} ${t.invoiceNumber} ${t.vendor} ${t.category} ${t.description} ${t.notes}`.toLowerCase().includes(q))return false;
+    return true;
+  });
+  rows.sort((a,b)=>{const av=txSortValue(a,txSortKey),bv=txSortValue(b,txSortKey);return av<bv?-txSortDir:av>bv?txSortDir:0;});
+  renderTxStats(rows);
+  const cols=[['transactionDate','Date'],['forkliftId','Forklift ID'],['workroom','Workroom'],['invoiceNumber','Invoice Number'],['amount','Amount'],['serviceCall','Service Call'],['vendor','Vendor'],['category','Category'],['hourMeter','Hour Meter'],['description','Description'],['notes','Notes']];
+  const head='<thead><tr>'+cols.map(([k,l])=>`<th class="sort ${txSortKey===k?(txSortDir===1?'asc':'desc'):''}" onclick="setTxSort('${k}')">${l}</th>`).join('')+'</tr></thead>';
+  const body=rows.map(t=>'<tr>'+cols.map(([k])=>{let v=t[k];if(k==='transactionDate')v=fmtDate(v);else if(k==='amount')v=fmtMoney(v);else if(k==='serviceCall')v=v?'✓':'—';else if(k==='hourMeter')v=(v===null||v===undefined)?'—':fmtNum(v);else v=v||'—';const cls=['forkliftId','amount','hourMeter'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
+  table.innerHTML=head+'<tbody>'+body+(rows.length?'':'<tr><td colspan="11" class="empty">No transactions match</td></tr>')+'</tbody>';
+}
 
 function formVal(id){return document.getElementById(id)?.value??'';}
 function setFormVal(id,v){const e=document.getElementById(id);if(e)e.value=(v===null||v===undefined)?'':v;}
@@ -492,7 +601,7 @@ function renderLocationIssues(){
 }
 
 function renderAll(){
-  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();}
+  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();}
 function updateTopbarCount(){
   const active=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).length;
   const inactive=fleet.filter(f=>['Retired','Scrapped','Sold'].includes(f.status)).length;
@@ -519,7 +628,7 @@ function showFleetScope(scope,el){
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
-function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();}
+function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();}
 
 window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
 </script>
