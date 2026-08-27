@@ -1082,7 +1082,7 @@ function renderLocationIssues(){
 }
 
 function renderAll(){
-  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();renderAging();}
+  renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();renderAging();renderServiceView();}
 function updateTopbarCount(){
   const active=fleet.filter(f=>!['Parked','Retired','Scrapped','Sold'].includes(f.status)).length;
   const inactive=fleet.filter(f=>['Parked','Retired','Scrapped','Sold'].includes(f.status)).length;
@@ -1111,7 +1111,7 @@ function showFleetScope(scope,el){
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
-function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.getElementById('view-aging').classList.toggle('hidden',name!=='aging');document.getElementById('view-help')?.classList.toggle('hidden',name!=='help');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='aging')renderAging();}
+function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.getElementById('view-service')?.classList.toggle('hidden',name!=='service');document.getElementById('view-aging').classList.toggle('hidden',name!=='aging');document.getElementById('view-help')?.classList.toggle('hidden',name!=='help');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='service')renderServiceView();if(name==='aging')renderAging();if(name==='help')filterHelp();}
 
 window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
 </script>
