@@ -115,10 +115,37 @@ tr.fleet-row:hover td{background:var(--accent-light)}
 .report-menu{position:relative}.report-pop{display:none;position:absolute;right:0;top:36px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;z-index:80;min-width:190px}.report-pop.open{display:block}.report-pop button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 10px;border-radius:5px;font:11px var(--sans);cursor:pointer}.report-pop button:hover{background:var(--surface2)}
 .edit-hint{font-size:10px;color:var(--muted);margin-top:5px}
 @media(max-width:800px){.guide-grid{grid-template-columns:1fr}}
+
+/* ── HOURS / SERVICE / RENTAL PHASE ───────────────────────────────── */
+.dot-parked{background:var(--warn)}
+.quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.service-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.service-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:13px}
+.service-card .label{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.service-card .value{font:600 20px var(--mono);margin-top:5px}
+.service-card .sub{font-size:9px;color:var(--muted);margin-top:4px}
+.service-two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.service-table-wrap{max-height:310px;overflow:auto}
+.status-guide-row{display:grid;grid-template-columns:125px 1fr;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:12px}
+.status-guide-row:last-child{border-bottom:0}
+.status-guide-row strong{font-weight:600}
+.expense-lines{display:flex;flex-direction:column;gap:7px}
+.expense-line{display:grid;grid-template-columns:150px 120px 1fr 32px;gap:7px;align-items:center}
+.expense-line input,.expense-line select{min-width:0}
+.doc-preview{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px;font-size:11px;line-height:1.55}
+.doc-match{font-weight:600;color:var(--accent)}
+.pending-chip{display:inline-flex;padding:2px 7px;border-radius:10px;background:var(--warn-light);color:var(--warn);font-size:9px;font-weight:600}
+.open-chip{display:inline-flex;padding:2px 7px;border-radius:10px;background:var(--danger-light);color:var(--danger);font-size:9px;font-weight:600}
+.closed-chip{display:inline-flex;padding:2px 7px;border-radius:10px;background:var(--good-light);color:var(--good);font-size:9px;font-weight:600}
+.hours-history{margin-top:10px;max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px}
+.service-button-row{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 4px}
+@media(max-width:1000px){.service-grid{grid-template-columns:repeat(2,1fr)}.service-two{grid-template-columns:1fr}.expense-line{grid-template-columns:1fr 100px 1fr 32px}}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -147,6 +174,10 @@ tr.fleet-row:hover td{background:var(--accent-light)}
       <div class="sidebar-section">History</div>
       <div class="nav-item" data-view="transactions" onclick="showView('transactions',this)">
         <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M3 2h10v12H3z"/><path d="M5 5h6M5 8h6M5 11h4"/></svg><span>Transactions</span>
+      </div>
+      <div class="sidebar-section">Service</div>
+      <div class="nav-item" data-view="service" onclick="showView('service',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M2 8h12M8 2v12"/><circle cx="8" cy="8" r="6"/></svg><span>Service / Hours</span>
       </div>
       <div class="sidebar-section">Analysis</div>
       <div class="nav-item" data-view="aging" onclick="showView('aging',this)">
@@ -179,7 +210,7 @@ tr.fleet-row:hover td{background:var(--accent-light)}
           <div class="section-actions">
             <button class="btn primary" onclick="openForkliftModal(null)">+ Add Forklift</button>
             <input id="fleet-search" class="search-box" placeholder="Search ID, workroom, make, model, serial…" style="width:260px" oninput="renderFleet()">
-            <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option><option>Sold</option></select>
+            <select id="status-filter" class="search-box" onchange="renderFleet()"><option value="">All statuses</option><option>Active</option><option>Down for Repair</option><option>Parked</option><option>Retired</option><option>Scrapped</option><option>Sold</option></select>
             <select id="fuel-filter" class="search-box" onchange="renderFleet()"><option value="">All fuel types</option><option>Propane</option><option>Electric</option><option>Gasoline</option><option>Diesel</option></select>
           </div>
         </div>
@@ -203,6 +234,24 @@ tr.fleet-row:hover td{background:var(--accent-light)}
         <div class="stats-row" id="tx-stats-row" style="margin-bottom:12px"></div>
         <div class="edit-hint">Double-click any transaction row to edit/correct it.</div>
         <div class="table-wrap"><table id="transactions-table"></table></div>
+      </section>
+
+
+      <section id="view-service" class="hidden">
+        <div class="section-header">
+          <div><div class="section-title">Service / Hours</div><div class="muted" style="font-size:11px;margin-top:3px">PMs, repairs, work orders, hour readings, and open rentals</div></div>
+          <div class="section-actions">
+            <button class="btn primary" onclick="openServiceModal('PM')">+ Log PM</button>
+            <button class="btn primary" onclick="openServiceModal('Repair')">+ Log Repair</button>
+            <button class="btn" onclick="openWorkOrderModal()">Upload Work Order / Hours</button>
+            <button class="btn" onclick="openStatusGuide()">Status Guide</button>
+          </div>
+        </div>
+        <div class="service-grid" id="service-stats"></div>
+        <div class="service-two">
+          <div class="panel"><div class="panel-head"><div class="panel-title">Open Rentals / Missing Cost</div><span class="muted" style="font-size:10px">Follow-up queue</span></div><div class="service-table-wrap"><table id="open-rentals-table"></table></div></div>
+          <div class="panel"><div class="panel-head"><div class="panel-title">Recent Hour Readings</div><span class="muted" style="font-size:10px">Latest readings first</span></div><div class="service-table-wrap"><table id="hours-table"></table></div></div>
+        </div>
       </section>
 
       <section id="view-aging" class="hidden">
@@ -376,7 +425,7 @@ function dayDiff(dateStr){if(!dateStr)return null;const today=new Date();today.s
 function daysSince(dateStr){const x=dayDiff(dateStr);return x===null?null:-x;}
 function fmtDate(v){if(!v)return'—';const [y,m,d]=v.split('-');return `${m}/${d}/${y}`;}
 function fmtNum(v){return v===null?'—':Number(v).toLocaleString('en-US');}
-function statusClass(s){s=(s||'').toLowerCase();if(s==='active')return'dot-active';if(s.includes('down'))return'dot-down';if(s==='retired')return'dot-retired';if(s==='sold')return'dot-sold';return'dot-scrapped';}
+function statusClass(s){s=(s||'').toLowerCase();if(s==='active')return'dot-active';if(s.includes('down'))return'dot-down';if(s==='parked')return'dot-parked';if(s==='retired')return'dot-retired';if(s==='sold')return'dot-sold';return'dot-scrapped';}
 
 function getAttention(f){const items=[];const pm=dayDiff(f.nextPM);if(pm!==null&&pm<0)items.push({level:'red',label:'PM overdue',detail:Math.abs(pm)+' days'});else if(pm!==null&&pm<=30)items.push({level:'warn',label:'PM due soon',detail:pm+' days'});if((f.status||'').toLowerCase().includes('down'))items.push({level:'red',label:'Down for repair',detail:''});const stale=daysSince(f.hoursUpdated);if(stale!==null&&stale>90)items.push({level:'warn',label:'Hours stale',detail:stale+' days'});return items;}
 function renderStats(){
@@ -422,7 +471,7 @@ function esc(v){return String(v??'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&l
 function renderFleet(){
   const q=(document.getElementById('fleet-search')?.value||'').toLowerCase(),sf=document.getElementById('status-filter')?.value||'',ff=document.getElementById('fuel-filter')?.value||'';
   let rows=fleet.filter(f=>{
-    const inactive=['Retired','Scrapped','Sold'].includes(f.status);
+    const inactive=['Parked','Retired','Scrapped','Sold'].includes(f.status);
     if(fleetScope==='active'&&inactive)return false;
     if(fleetScope==='inactive'&&!inactive)return false;
     if(sf&&f.status!==sf)return false;
@@ -865,8 +914,8 @@ function renderLocationIssues(){
 function renderAll(){
   renderLocationIssues();renderStats();renderAttention();renderSnapshot();renderFleet();renderTransactions();renderAging();}
 function updateTopbarCount(){
-  const active=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).length;
-  const inactive=fleet.filter(f=>['Retired','Scrapped','Sold'].includes(f.status)).length;
+  const active=fleet.filter(f=>!['Parked','Retired','Scrapped','Sold'].includes(f.status)).length;
+  const inactive=fleet.filter(f=>['Parked','Retired','Scrapped','Sold'].includes(f.status)).length;
   const total=fleet.length;
   const countEl=document.getElementById('top-count');
   const titleEl=document.getElementById('top-title-text');
@@ -886,7 +935,7 @@ function showFleetScope(scope,el){
   if(sub) sub.textContent=scope==='active'
     ?'Active and down-for-repair units from the Forklift Fleet SharePoint list'
     :scope==='inactive'
-      ?'Retired, scrapped, and sold units from the Forklift Fleet SharePoint list'
+      ?'Parked, retired, scrapped, and sold units from the Forklift Fleet SharePoint list'
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
@@ -911,7 +960,7 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
         <div class="form-group full"><label class="form-label">Serial Number</label><input class="form-input" id="ff-serial"></div>
         <div class="form-group"><label class="form-label">Status</label>
           <select class="form-input" id="ff-status" onchange="toggleDispositionDateField()">
-            <option>Active</option><option>Down for Repair</option><option>Retired</option><option>Scrapped</option><option>Sold</option>
+            <option>Active</option><option>Down for Repair</option><option>Parked</option><option>Retired</option><option>Scrapped</option><option>Sold</option>
           </select>
         </div>
         <div class="form-group" id="ff-disposition-date-wrap" style="display:none"><label class="form-label">Disposition Date</label><input class="form-input" type="date" id="ff-disposition-date"></div>
@@ -951,8 +1000,16 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
 
       <div id="ff-history-section" style="display:none">
         <div class="form-section">Expense / Service History</div>
+        <div class="service-button-row" id="ff-service-actions">
+          <button class="btn" type="button" onclick="openServiceForEditingForklift('PM')">Log PM</button>
+          <button class="btn" type="button" onclick="openServiceForEditingForklift('Repair')">Log Repair</button>
+          <button class="btn" type="button" onclick="openWorkOrderForEditingForklift()">Upload Work Order / Hours</button>
+          <button class="btn" type="button" onclick="openStatusGuide()">Status Guide</button>
+        </div>
         <div class="metric-grid" id="ff-history-metrics"></div>
         <div class="history-wrap"><table id="ff-history-table"></table></div>
+        <div class="form-section" style="margin-top:13px">Hour Reading History</div>
+        <div class="hours-history"><table id="ff-hours-history-table"></table></div>
       </div>
 
       <div class="form-section">Notes</div>
@@ -981,6 +1038,152 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
     <div class="modal-foot"><button class="btn" onclick="closeImportModal()">Cancel</button><button class="btn primary" id="import-save-btn" onclick="importNetSuiteRows()">Import Transactions</button></div>
   </div>
 </div>
+
+
+<div class="modal-backdrop" id="status-guide-modal" onclick="if(event.target===this)closeStatusGuide()"><div class="modal" style="max-width:650px"><div class="modal-head"><div><div class="modal-title">Forklift Status Guide</div><div class="muted" style="font-size:10px;margin-top:3px">Operational status definitions used in Forklift Manager</div></div><button class="modal-close" onclick="closeStatusGuide()">×</button></div><div class="modal-body">
+  <div class="status-guide-row"><strong>Active</strong><span>In normal service and available for daily operation.</span></div>
+  <div class="status-guide-row"><strong>Down for Repair</strong><span>Temporarily unavailable because a repair is required or underway. Expected to return to service.</span></div>
+  <div class="status-guide-row"><strong>Parked</strong><span>Still owned and kept at a location, but intentionally not being used or repaired right now. May be returned to service later.</span></div>
+  <div class="status-guide-row"><strong>Retired</strong><span>Permanently removed from normal service with no intention to return it to routine operation. It may still be physically held while final disposition is decided.</span></div>
+  <div class="status-guide-row"><strong>Sold</strong><span>Disposed of through a sale. Disposition Date records the actual sale/disposition date.</span></div>
+  <div class="status-guide-row"><strong>Scrapped</strong><span>Permanently disposed of as scrap. Disposition Date records the actual disposal date.</span></div>
+</div><div class="modal-foot"><button class="btn primary" onclick="closeStatusGuide()">Close</button></div></div></div>
+
+<div class="modal-backdrop" id="workorder-modal" onclick="if(event.target===this)closeWorkOrderModal()"><div class="modal" style="max-width:720px"><div class="modal-head"><div><div class="modal-title">Upload Work Order / Hour Reading</div><div class="muted" style="font-size:10px;margin-top:3px">Text-based PDFs are read for serial, hours, date, vendor, and work-order number. Nothing updates until you confirm.</div></div><button class="modal-close" onclick="closeWorkOrderModal()">×</button></div><div class="modal-body">
+  <div class="form-grid">
+    <div class="form-group full"><label class="form-label">Work Order / Service Document</label><input class="form-input" type="file" id="wo-file" accept=".pdf,.txt,application/pdf,text/plain" onchange="analyzeWorkOrderFile(this.files[0])"></div>
+    <div class="form-group"><label class="form-label">Matched Forklift</label><select class="form-input" id="wo-forklift" onchange="refreshWorkOrderMatch()"></select></div>
+    <div class="form-group"><label class="form-label">Reading Date</label><input class="form-input" type="date" id="wo-date"></div>
+    <div class="form-group"><label class="form-label">Hours</label><input class="form-input" type="number" step="0.1" id="wo-hours"></div>
+    <div class="form-group"><label class="form-label">Work Order #</label><input class="form-input" id="wo-reference"></div>
+    <div class="form-group"><label class="form-label">Vendor</label><input class="form-input" id="wo-vendor"></div>
+    <div class="form-group"><label class="form-label">Detected Serial</label><input class="form-input" id="wo-serial"></div>
+    <div class="form-group full"><label class="form-label">Notes</label><textarea class="form-input" id="wo-notes"></textarea></div>
+  </div>
+  <div class="doc-preview" id="wo-preview">Choose a work order to analyze.</div>
+</div><div class="modal-foot"><button class="btn" onclick="closeWorkOrderModal()">Cancel</button><button class="btn primary" id="wo-save" onclick="saveWorkOrderHours()">Confirm & Save Reading</button></div></div></div>
+
+<div class="modal-backdrop" id="service-modal" onclick="if(event.target===this)closeServiceModal()"><div class="modal" style="max-width:820px"><div class="modal-head"><div><div class="modal-title" id="service-modal-title">Log Service</div><div class="muted" id="service-modal-sub" style="font-size:10px;margin-top:3px"></div></div><button class="modal-close" onclick="closeServiceModal()">×</button></div><div class="modal-body">
+  <div class="form-section">Service Event</div>
+  <div class="form-grid">
+    <div class="form-group"><label class="form-label">Forklift</label><select class="form-input" id="svc-forklift" onchange="serviceForkliftChanged()"></select></div>
+    <div class="form-group"><label class="form-label">Service Date</label><input class="form-input" type="date" id="svc-date"></div>
+    <div class="form-group"><label class="form-label">Vendor</label><input class="form-input" id="svc-vendor"></div>
+    <div class="form-group"><label class="form-label">Vendor Phone</label><input class="form-input" id="svc-vendor-phone"></div>
+    <div class="form-group"><label class="form-label">Invoice / Work Order #</label><input class="form-input" id="svc-reference"></div>
+    <div class="form-group"><label class="form-label">Hours</label><input class="form-input" type="number" step="0.1" id="svc-hours"></div>
+    <div class="form-group" id="svc-pm-frequency-wrap"><label class="form-label">PM Frequency</label><input class="form-input" id="svc-pm-frequency"></div>
+    <div class="form-group" id="svc-downtime-wrap"><label class="form-label">Downtime Days</label><input class="form-input" type="number" step="0.1" id="svc-downtime"></div>
+    <div class="form-group full"><label class="form-label" id="svc-description-label">Service Description</label><textarea class="form-input" id="svc-description"></textarea></div>
+    <div class="form-group full"><label class="form-label">Invoice / Work Order Attachments</label><input class="form-input" type="file" id="svc-files" multiple></div>
+  </div>
+
+  <div class="form-section">Expense Lines</div>
+  <div class="muted" style="font-size:10px">One service event can have multiple expense lines. For repairs, only one line is counted as the service call. PM lines never count as service calls.</div>
+  <div class="expense-lines" id="svc-expense-lines"></div>
+  <button class="btn" type="button" onclick="addExpenseLine()">+ Add Expense Line</button>
+
+  <div id="svc-repair-options">
+    <div class="form-section">Repair / Status</div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Rental Required</label><label style="font-size:12px;padding-top:7px"><input type="checkbox" id="svc-rental-required" onchange="toggleRentalFields()"> Yes</label></div>
+      <div class="form-group"><label class="form-label">Status After This Entry</label><select class="form-input" id="svc-status-after"><option value="">Leave unchanged</option><option>Active</option><option>Down for Repair</option><option>Parked</option></select></div>
+    </div>
+    <div id="svc-rental-fields" style="display:none;margin-top:10px">
+      <div class="form-section">Rental Tracking</div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Rental Vendor</label><input class="form-input" id="svc-rental-vendor"></div>
+        <div class="form-group"><label class="form-label">Rental Start Date</label><input class="form-input" type="date" id="svc-rental-start"></div>
+        <div class="form-group"><label class="form-label">Rental End Date</label><input class="form-input" type="date" id="svc-rental-end"></div>
+        <div class="form-group"><label class="form-label">Rental Cost</label><input class="form-input" type="number" step="0.01" id="svc-rental-cost" placeholder="Leave blank if invoice pending"></div>
+        <div class="form-group"><label class="form-label">Rental Invoice #</label><input class="form-input" id="svc-rental-invoice"></div>
+        <div class="form-group full"><label class="form-label">Rental Notes</label><textarea class="form-input" id="svc-rental-notes"></textarea></div>
+      </div>
+    </div>
+  </div>
+  <div class="form-section">Notes</div><textarea class="form-input" id="svc-notes"></textarea>
+</div><div class="modal-foot"><button class="btn" onclick="closeServiceModal()">Cancel</button><button class="btn primary" id="svc-save" onclick="saveServiceEvent()">Save Service Event</button></div></div></div>
+
+<script>
+/* Service / Hours extension */
+const HOUR_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Hour%20Readings')";
+const SERVICE_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Service%20Events')";
+const RENTAL_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Rentals')";
+let hourReadings=[],hourFieldMap={},hourFieldMeta={},serviceEvents=[],serviceFieldMap={},serviceFieldMeta={},rentals=[],rentalFieldMap={},rentalFieldMeta={};
+let workOrderFile=null,workOrderText='',serviceMode='PM';
+
+function todayISO(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+async function loadGenericFields(token,listApi){const r=await fetch(listApi+"/fields?$select=Title,InternalName,Hidden,TypeAsString,Choices,FillInChoice",{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json(),m={},meta={};d.d.results.forEach(f=>{if(!f.Hidden){m[normalizeLabel(f.Title)]=f.InternalName;meta[normalizeLabel(f.Title)]=f;if(f.InternalName==='Title'){m.title='Title';meta.title=f;}}});return {map:m,meta};}
+async function loadGenericItems(token,listApi){let u=listApi+"/items?$select=*&$top=5000&$orderby=Id",all=[];while(u){const r=await fetch(u,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();all=all.concat(d.d.results);u=d.d.__next||null;}return all;}
+function gv(i,map,...labels){for(const l of labels){const n=map[normalizeLabel(l)];if(n&&i[n]!==undefined)return i[n];}return undefined;}
+function mapHours(i){return {spId:i.Id,readingId:String(i.Title||''),forkliftId:String(gv(i,hourFieldMap,'Forklift ID')||''),readingDate:dateOnly(gv(i,hourFieldMap,'Reading Date')),hours:num(gv(i,hourFieldMap,'Hours','Hour Meter')),source:String(gv(i,hourFieldMap,'Source')||''),workroom:String(gv(i,hourFieldMap,'Workroom')||''),reference:String(gv(i,hourFieldMap,'Invoice / Work Order','Invoice / Work Order #','Invoice Number','Work Order')||''),notes:String(gv(i,hourFieldMap,'Notes')||'')};}
+function mapRental(i){const rawStatus=String(gv(i,rentalFieldMap,'Status','Rental Status')||'');const cost=num(gv(i,rentalFieldMap,'Cost','Rental Cost','Amount'));return {spId:i.Id,rentalId:String(i.Title||''),forkliftId:String(gv(i,rentalFieldMap,'Forklift ID')||''),workroom:String(gv(i,rentalFieldMap,'Workroom')||''),vendor:String(gv(i,rentalFieldMap,'Rental Vendor','Vendor')||''),startDate:dateOnly(gv(i,rentalFieldMap,'Start Date','Rental Start Date')),endDate:dateOnly(gv(i,rentalFieldMap,'End Date','Rental End Date')),cost,invoice:String(gv(i,rentalFieldMap,'Invoice Number','Rental Invoice #','Invoice / Work Order')||''),status:rawStatus||(cost==null?'Cost Pending':(gv(i,rentalFieldMap,'End Date','Rental End Date')?'Closed':'Open')),serviceEventId:String(gv(i,rentalFieldMap,'Service Event ID')||''),notes:String(gv(i,rentalFieldMap,'Notes')||'')};}
+function mapServiceEvent(i){return {spId:i.Id,eventId:String(i.Title||''),forkliftId:String(gv(i,serviceFieldMap,'Forklift ID')||''),serviceDate:dateOnly(gv(i,serviceFieldMap,'Service Date','Date')),serviceType:String(gv(i,serviceFieldMap,'Service Type','Type')||''),vendor:String(gv(i,serviceFieldMap,'Vendor')||''),reference:String(gv(i,serviceFieldMap,'Invoice / Work Order','Invoice / Work Order #','Work Order','Invoice Number')||''),hours:num(gv(i,serviceFieldMap,'Hours','Hour Meter')),notes:String(gv(i,serviceFieldMap,'Notes')||'')};}
+async function loadServiceData(token){
+  try{const f=await loadGenericFields(token,HOUR_LIST_API);hourFieldMap=f.map;hourFieldMeta=f.meta;hourReadings=(await loadGenericItems(token,HOUR_LIST_API)).map(mapHours);}catch(e){console.warn('Hour Readings not loaded:',e);hourReadings=[];}
+  try{const f=await loadGenericFields(token,SERVICE_LIST_API);serviceFieldMap=f.map;serviceFieldMeta=f.meta;serviceEvents=(await loadGenericItems(token,SERVICE_LIST_API)).map(mapServiceEvent);}catch(e){console.warn('Service Events not loaded:',e);serviceEvents=[];}
+  try{const f=await loadGenericFields(token,RENTAL_LIST_API);rentalFieldMap=f.map;rentalFieldMeta=f.meta;rentals=(await loadGenericItems(token,RENTAL_LIST_API)).map(mapRental);}catch(e){console.warn('Rentals not loaded:',e);rentals=[];}
+}
+
+// Override load so service/hour data is refreshed with the rest of the app.
+loadData=async function(force=false){clearError();setConnection('loading',force?'Refreshing SharePoint…':'Connecting to SharePoint…');try{const token=await getToken();await loadFields(token);await loadActiveWorkrooms(token);await loadTransactionFields(token);await Promise.all([loadTransactions(token),loadServiceData(token)]);let url=SP_ITEMS_API+"?$select=*&$top=500&$orderby=Id",all=[];while(url){const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read Forklift Fleet (HTTP '+r.status+').');const d=await r.json();all=all.concat(d.d.results);url=d.d.__next||null;}fleet=all.map(mapItem);updateTopbarCount();setConnection('ok',`Connected — ${fleet.length} Forklifts · ${transactions.length} Transactions · ${hourReadings.length} Hour Readings`);renderAll();}catch(err){console.error(err);setConnection('bad','SharePoint connection failed');showError(err.message);}};
+
+function isRentalTx(t){const c=String(t.category||'').toLowerCase(),n=(String(t.notes||'')+' '+String(t.description||'')).toLowerCase();return c.includes('rental')||n.includes('expense type: rental')||n.includes('rental id:');}
+forkliftMetrics=function(f){const rows=txForForklift(f.id),pmSet=pmGroupSet(),cy=currentYear();const years={};let lifetime=0,repairYTD=0,serviceYTD=0,pmSpendYTD=0,pmCountYTD=0,rentalSpendYTD=0,rentalSpendLifetime=0;const pmInvoices=new Set();rows.forEach(t=>{const a=Number(t.amount||0),y=txYear(t);lifetime+=a;if(y)years[y]=(years[y]||0)+a;if(isRentalTx(t)){rentalSpendLifetime+=a;if(y===cy)rentalSpendYTD+=a;return;}if(y===cy){if(isPM(t,pmSet)){pmSpendYTD+=a;pmInvoices.add(txGroupKey(t));}else{repairYTD+=a;if(t.serviceCall)serviceYTD++;}}});pmCountYTD=pmInvoices.size;const rr=rentals.filter(r=>r.forkliftId===f.id);let rentalDaysYTD=0;const jan1=new Date(cy,0,1),today=new Date();rr.forEach(r=>{if(!r.startDate)return;let a=new Date(r.startDate+'T00:00:00'),b=r.endDate?new Date(r.endDate+'T00:00:00'):today;if(b<jan1)return;if(a<jan1)a=jan1;if(b>today)b=today;rentalDaysYTD+=Math.max(0,Math.floor((b-a)/86400000)+1);});return {rows,years,lifetime,repairYTD,serviceYTD,pmSpendYTD,pmCountYTD,pmExpected:pmExpectedAnnual(f.pmFrequency),pmExpectedToDate:pmExpectedToDate(f.pmFrequency),rentalSpendYTD,rentalSpendLifetime,rentalDaysYTD};};
+
+const _renderForkliftHistory=renderForkliftHistory;
+renderForkliftHistory=function(f){_renderForkliftHistory(f);const tbl=document.getElementById('ff-hours-history-table');if(tbl){if(!f){tbl.innerHTML='';}else{const rows=hourReadings.filter(h=>h.forkliftId===f.id).sort((a,b)=>String(b.readingDate).localeCompare(String(a.readingDate)));tbl.innerHTML='<thead><tr><th>Date</th><th>Hours</th><th>Source</th><th>Reference</th><th>Notes</th></tr></thead><tbody>'+rows.map(h=>`<tr><td>${fmtDate(h.readingDate)}</td><td class="mono">${fmtNum(h.hours)}</td><td>${esc(h.source||'—')}</td><td>${esc(h.reference||'—')}</td><td style="white-space:normal">${esc(h.notes||'—')}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="5" class="empty">No hour readings yet</td></tr>')+'</tbody>';}
+  const metrics=document.getElementById('ff-history-metrics');if(metrics&&f){const m=forkliftMetrics(f);metrics.insertAdjacentHTML('beforeend',`<div class="metric-card"><div class="k">Rental Spend YTD</div><div class="v">${fmtMoney(m.rentalSpendYTD)}</div><div class="sub">Excluded from grading repair cost</div></div><div class="metric-card"><div class="k">Lifetime Rental Spend</div><div class="v">${fmtMoney(m.rentalSpendLifetime)}</div></div><div class="metric-card"><div class="k">Rental Days YTD</div><div class="v">${fmtNum(m.rentalDaysYTD)}</div></div>`);}}
+};
+
+function renderServiceView(){const open=rentals.filter(r=>!r.endDate||r.cost==null||/pending|open/i.test(r.status));const pending=open.filter(r=>r.cost==null);const pendingCost=pending.length;const stats=document.getElementById('service-stats');if(stats)stats.innerHTML=`<div class="service-card"><div class="label">Hour Readings</div><div class="value">${hourReadings.length}</div><div class="sub">Historical meter updates</div></div><div class="service-card"><div class="label">Service Events</div><div class="value">${serviceEvents.length}</div><div class="sub">PM / repair / work orders</div></div><div class="service-card"><div class="label">Open Rentals</div><div class="value">${open.length}</div><div class="sub">Still open or incomplete</div></div><div class="service-card ${pendingCost?'warn':''}"><div class="label">Rental Cost Pending</div><div class="value">${pendingCost}</div><div class="sub">Need invoice / cost entry</div></div>`;
+  const rt=document.getElementById('open-rentals-table');if(rt)rt.innerHTML='<thead><tr><th>Forklift</th><th>Workroom</th><th>Vendor</th><th>Start</th><th>End</th><th>Cost</th><th>Status</th></tr></thead><tbody>'+open.map(r=>`<tr><td class="mono">${esc(r.forkliftId||'—')}</td><td>${esc(r.workroom||'—')}</td><td>${esc(r.vendor||'—')}</td><td>${fmtDate(r.startDate)}</td><td>${fmtDate(r.endDate)}</td><td class="mono">${r.cost==null?'Pending':fmtMoney(r.cost)}</td><td>${r.cost==null?'<span class="pending-chip">Cost Pending</span>':(!r.endDate?'<span class="open-chip">Open</span>':'<span class="closed-chip">Closed</span>')}</td></tr>`).join('')+(open.length?'':'<tr><td colspan="7" class="empty">No open rentals</td></tr>')+'</tbody>';
+  const ht=document.getElementById('hours-table');if(ht){const rows=[...hourReadings].sort((a,b)=>String(b.readingDate).localeCompare(String(a.readingDate))).slice(0,50);ht.innerHTML='<thead><tr><th>Date</th><th>Forklift</th><th>Hours</th><th>Source</th><th>Reference</th></tr></thead><tbody>'+rows.map(h=>`<tr><td>${fmtDate(h.readingDate)}</td><td class="mono">${esc(h.forkliftId)}</td><td class="mono">${fmtNum(h.hours)}</td><td>${esc(h.source||'—')}</td><td>${esc(h.reference||'—')}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="5" class="empty">No readings yet</td></tr>')+'</tbody>';}
+}
+function renderRentalDashboard(){let p=document.getElementById('rental-alert-panel');if(!p){const loc=document.getElementById('location-issues-panel');p=document.createElement('div');p.id='rental-alert-panel';p.className='alerts-panel';p.style.display='none';p.innerHTML='<div class="alerts-header"><h3>Rental Follow-Up</h3><span id="rental-alert-count" style="font-size:11px;color:var(--muted)"></span></div><div id="rental-alert-list"></div>';loc?.insertAdjacentElement('afterend',p);}const pending=rentals.filter(r=>r.cost==null&&!r.endDate);if(!pending.length){p.style.display='none';return;}p.style.display='';document.getElementById('rental-alert-count').textContent=`${pending.length} rental${pending.length===1?'':'s'} need cost`;document.getElementById('rental-alert-list').innerHTML=pending.map(r=>`<div class="alert-row" style="grid-template-columns:90px 1fr 1fr auto"><div><strong>${esc(r.forkliftId||'—')}</strong></div><div>${esc(r.vendor||'Rental vendor not entered')}</div><div><span class="pending-chip">Cost Pending</span></div><div>${fmtDate(r.startDate)}</div></div>`).join('');}
+const _renderAll=renderAll;renderAll=function(){_renderAll();renderServiceView();renderRentalDashboard();};
+
+showView=function(name,el){['dashboard','fleet','transactions','service','aging'].forEach(v=>document.getElementById('view-'+v)?.classList.toggle('hidden',name!==v));document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='service')renderServiceView();if(name==='aging')renderAging();};
+
+function closeStatusGuide(){document.getElementById('status-guide-modal').classList.remove('open');}function openStatusGuide(){document.getElementById('status-guide-modal').classList.add('open');}
+function populateForkliftSelect(id,selected=''){const el=document.getElementById(id);if(!el)return;el.innerHTML='<option value="">— Select Forklift —</option>'+[...fleet].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true})).map(f=>`<option value="${esc(f.id)}" ${f.id===selected?'selected':''}>${esc(f.id)} · ${esc(f.workroom||'')} · ${esc(f.manufacturer||'')} ${esc(f.model||'')}</option>`).join('');}
+function fieldAssign(body,map,meta,label,value){const k=normalizeLabel(label),internal=map[k],m=meta[k];if(!internal||value===undefined||value===null||value==='')return;const t=m?.TypeAsString||'';if(t==='Boolean')body[internal]=!!value;else if(['Number','Currency','Integer'].includes(t))body[internal]=Number(value);else if(t==='DateTime')body[internal]=String(value).includes('T')?value:value+'T12:00:00Z';else if(t==='Choice'){const ch=m.Choices?.results||[];const exact=ch.find(x=>String(x).toLowerCase()===String(value).toLowerCase());if(exact)body[internal]=exact;else if(m.FillInChoice)body[internal]=String(value);}else body[internal]=String(value);}
+async function listEntityType(token,listApi){const r=await fetch(listApi+'?$select=ListItemEntityTypeFullName',{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read SharePoint list type (HTTP '+r.status+').');return (await r.json()).d.ListItemEntityTypeFullName;}
+async function createHourReading(token,{forkliftId,date,hours,source,workroom,reference,notes}){if(!forkliftId||!date||hours===null||hours===undefined||hours==='')return null;const exists=hourReadings.some(h=>h.forkliftId===forkliftId&&h.readingDate===date&&Number(h.hours)===Number(hours));if(exists)return null;const et=await listEntityType(token,HOUR_LIST_API),body={__metadata:{type:et},Title:`HR-${forkliftId.replace('#','')}-${date.replaceAll('-','')}-${String(hours).replace('.','_')}`};fieldAssign(body,hourFieldMap,hourFieldMeta,'Forklift ID',forkliftId);fieldAssign(body,hourFieldMap,hourFieldMeta,'Reading Date',date);fieldAssign(body,hourFieldMap,hourFieldMeta,'Hours',hours);fieldAssign(body,hourFieldMap,hourFieldMeta,'Source',source);fieldAssign(body,hourFieldMap,hourFieldMeta,'Workroom',workroom);fieldAssign(body,hourFieldMap,hourFieldMeta,'Invoice / Work Order',reference);fieldAssign(body,hourFieldMap,hourFieldMeta,'Notes',notes);const r=await fetch(HOUR_LIST_API+'/items',{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Hour Reading save failed: '+await r.text());return (await r.json()).d;}
+async function updateFleetHours(token,f,hours,date){const old=Number(f.hours||0),next=Number(hours);if(!Number.isFinite(next))return;if(next<old&&!confirm(`The new reading (${next.toLocaleString()}) is LOWER than the current reading (${old.toLocaleString()}) for ${f.id}. Save it anyway?`))throw new Error('Hour update cancelled.');const et=await getListItemType(token),body={__metadata:{type:et}};const hi=fieldMap[normalizeLabel('Current Hours')],di=fieldMap[normalizeLabel('Hours Updated')];if(hi)body[hi]=next;if(di)body[di]=(date||todayISO())+'T00:00:00Z';const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Current Hours update failed: '+await r.text());}
+
+// Enhanced fleet save: every changed Current Hours value produces an Hour Reading.
+saveForklift=async function(){const btn=document.getElementById('forklift-save-btn'),forkliftId=formVal('ff-id').trim(),selectedWorkroom=formVal('ff-workroom').trim(),selectedStatus=formVal('ff-status').trim(),disposed=['Retired','Scrapped','Sold'].includes(selectedStatus),dispositionDate=disposed?formVal('ff-disposition-date').trim():'';if(!forkliftId){alert('Forklift ID is required.');return;}if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}if(!selectedWorkroom){alert('Current Workroom is required.');return;}if(disposed&&!dispositionDate){alert('Disposition Date is required for Retired, Scrapped, or Sold. Enter the actual date manually.');return;}if(!disposed&&!activeWorkrooms.includes(selectedWorkroom)){alert('Active, Down for Repair, and Parked forklifts must be assigned to an Active Lease Manager location.');return;}const duplicate=fleet.find(x=>x.id===forkliftId&&x.spId!==editingForkliftSpId);if(duplicate){alert(`${forkliftId} already exists.`);return;}const old=fleet.find(x=>x.spId===editingForkliftSpId),oldHours=old?.hours,newHours=numOrNull(formVal('ff-hours'));let readingDate=formVal('ff-hours-updated')||todayISO(),hoursChanged=newHours!==null&&(oldHours===null||oldHours===undefined||Number(oldHours)!==Number(newHours));if(hoursChanged&&oldHours!=null&&Number(newHours)<Number(oldHours)&&!confirm(`The new Current Hours (${Number(newHours).toLocaleString()}) is lower than the existing reading (${Number(oldHours).toLocaleString()}). Continue?`))return;if(hoursChanged&&!formVal('ff-hours-updated'))setFormVal('ff-hours-updated',readingDate);btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken(),itemType=await getListItemType(token),body={__metadata:{type:itemType},Title:forkliftId};const values={'Manufacturer':formVal('ff-manufacturer').trim(),'Model':formVal('ff-model').trim(),'Serial Number':formVal('ff-serial').trim(),'Current Workroom':selectedWorkroom,'Status':selectedStatus,'Disposition Date':dispositionDate,'Current Hours':formVal('ff-hours'),'Hours Updated':formVal('ff-hours-updated'),'Acquisition Date':formVal('ff-acqdate'),'Acquisition Cost':formVal('ff-acqcost'),'Attachment':formVal('ff-attachment'),'Carriage-Mounted Pole Qty':formVal('ff-carriage'),'Fork-Mounted Pole Qty':formVal('ff-forkmounted'),'Fork Qty':formVal('ff-forkqty'),'Fuel Type':formVal('ff-fuel'),'Tire Type':formVal('ff-tire').trim(),'Capacity (lbs)':formVal('ff-capacity'),'Mast Height (in)':formVal('ff-mast'),'Year':formVal('ff-year'),'Primary Service Vendor':formVal('ff-vendor').trim(),'Primary Service Vendor Phone':formVal('ff-vendor-phone').trim(),'PM Frequency':formVal('ff-pmfreq').trim(),'Last PM Date':formVal('ff-lastpm'),'Next PM Due':formVal('ff-nextpm'),'Notes':formVal('ff-notes').trim()};for(const [label,value] of Object.entries(values)){const internal=fieldMap[normalizeLabel(label)];if(internal)body[internal]=fieldPayloadValue(label,value);}let savedId=editingForkliftSpId;if(editingForkliftSpId){const r=await fetch(SP_ITEMS_API+`(${editingForkliftSpId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('SharePoint update failed: '+await r.text());}else{const r=await fetch(SP_ITEMS_API,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('SharePoint create failed: '+await r.text());savedId=(await r.json()).d.Id;}if(hoursChanged){try{await createHourReading(token,{forkliftId,date:readingDate,hours:newHours,source:old?'Manual Update':'Initial Entry',workroom:selectedWorkroom,reference:'',notes:old?'Current Hours changed from '+(oldHours??'blank')+' to '+newHours+'.':'Initial Current Hours entry.'});}catch(e){console.error(e);alert('Forklift saved, but the Hour Reading history entry could not be created: '+e.message);}}document.getElementById('forklift-modal').classList.remove('open');editingForkliftSpId=null;tokenCache=null;await loadData(true);}catch(err){console.error(err);alert('Save failed: '+err.message);}finally{btn.disabled=false;btn.textContent='Save Forklift';}};
+
+function openWorkOrderModal(selected=''){workOrderFile=null;workOrderText='';populateForkliftSelect('wo-forklift',selected);setFormVal('wo-date',todayISO());setFormVal('wo-hours','');setFormVal('wo-reference','');setFormVal('wo-vendor','');setFormVal('wo-serial','');setFormVal('wo-notes','');document.getElementById('wo-file').value='';document.getElementById('wo-preview').textContent='Choose a work order to analyze.';document.getElementById('workorder-modal').classList.add('open');}
+function openWorkOrderForEditingForklift(){const f=fleet.find(x=>x.spId===editingForkliftSpId);openWorkOrderModal(f?.id||'');}
+function closeWorkOrderModal(){document.getElementById('workorder-modal').classList.remove('open');workOrderFile=null;workOrderText='';}
+async function pdfText(file){if(typeof pdfjsLib==='undefined')throw new Error('PDF reader did not load.');pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';const buf=await file.arrayBuffer(),pdf=await pdfjsLib.getDocument({data:buf}).promise;let txt='';for(let p=1;p<=pdf.numPages;p++){const page=await pdf.getPage(p),c=await page.getTextContent();txt+=' '+c.items.map(x=>x.str).join(' ');}return txt;}
+function parseDateUS(v){const m=String(v||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`:'';}
+function extractWorkOrder(text){const clean=text.replace(/\s+/g,' ');let serial='';for(const rx of [/(?:S\/N|Serial(?: Number)?|Equipment)\s*:?\s*([A-Z0-9-]{6,})/i,/\b([A-Z]\d{3}[A-Z]\d{5}[A-Z])\b/i]){const m=clean.match(rx);if(m){serial=m[1];break;}}const hm=clean.match(/Hours\s*:?\s*([\d,]+(?:\.\d+)?)/i),wo=clean.match(/Work Order(?: No\.)?\s*:?\s*([A-Z0-9-]+)/i),dc=clean.match(/Date Completed\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i),ds=clean.match(/Date Started\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);let vendor='';if(/crown lift trucks|crown\.com/i.test(clean))vendor='Crown';return {serial,hours:hm?Number(hm[1].replaceAll(',','')):null,reference:wo?wo[1]:'',date:parseDateUS((dc||ds||[])[1]||''),vendor,isPM:/planned maint|planned maintenance|\bPM\b/i.test(clean)};}
+async function analyzeWorkOrderFile(file){if(!file)return;workOrderFile=file;const preview=document.getElementById('wo-preview');preview.textContent='Reading document…';try{workOrderText=file.name.toLowerCase().endsWith('.pdf')?await pdfText(file):await file.text();const x=extractWorkOrder(workOrderText);setFormVal('wo-serial',x.serial);setFormVal('wo-hours',x.hours??'');setFormVal('wo-reference',x.reference);if(x.date)setFormVal('wo-date',x.date);setFormVal('wo-vendor',x.vendor);let match=x.serial?fleet.find(f=>String(f.serial||'').trim().toUpperCase()===x.serial.toUpperCase()):null;if(match)setFormVal('wo-forklift',match.id);refreshWorkOrderMatch();preview.innerHTML=`<strong>Detected:</strong> ${x.isPM?'Planned Maintenance / PM':'Service Work Order'}<br>Serial: <strong>${esc(x.serial||'Not found')}</strong> · Hours: <strong>${x.hours==null?'Not found':fmtNum(x.hours)}</strong> · Date: <strong>${x.date?fmtDate(x.date):'Not found'}</strong> · Work Order: <strong>${esc(x.reference||'Not found')}</strong><br><span class="muted">Review the fields above. The app will ask for confirmation before updating Current Hours.</span>`;}catch(e){console.error(e);preview.textContent='Could not automatically read this document: '+e.message+' You can still enter the fields manually and save it.';}}
+function refreshWorkOrderMatch(){const f=fleet.find(x=>x.id===formVal('wo-forklift'));if(!f)return;const serial=formVal('wo-serial').trim();const preview=document.getElementById('wo-preview');if(serial&&f.serial&&serial.toUpperCase()!==String(f.serial).toUpperCase())preview.insertAdjacentHTML('beforeend',`<br><span style="color:var(--danger);font-weight:600">Warning: selected forklift serial ${esc(f.serial)} does not match detected serial ${esc(serial)}.</span>`);}
+async function createServiceEventRecord(token,data,files=[]){let et;try{et=await listEntityType(token,SERVICE_LIST_API);}catch(e){console.warn('Service Event list unavailable',e);return null;}const body={__metadata:{type:et},Title:data.eventId};for(const [l,v] of Object.entries({'Forklift ID':data.forkliftId,'Service Date':data.date,'Service Type':data.type,'Vendor':data.vendor,'Vendor Phone':data.vendorPhone,'Workroom':data.workroom,'Invoice / Work Order':data.reference,'Hours':data.hours,'Downtime Days':data.downtime,'Rental Required':data.rentalRequired,'Description':data.description,'Notes':data.notes,'Status':data.status}))fieldAssign(body,serviceFieldMap,serviceFieldMeta,l,v);const r=await fetch(SERVICE_LIST_API+'/items',{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Service Event save failed: '+await r.text());const item=(await r.json()).d;for(const file of files){try{await uploadAttachment(token,SERVICE_LIST_API,item.Id,file);}catch(e){console.error('Attachment failed',file.name,e);alert('Service Event saved, but attachment '+file.name+' could not be uploaded.');}}return item;}
+async function uploadAttachment(token,listApi,itemId,file){const safe=file.name.replaceAll("'","''");const r=await fetch(`${listApi}/items(${itemId})/AttachmentFiles/add(FileName='${encodeURIComponent(safe)}')`,{method:'POST',headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token},body:await file.arrayBuffer()});if(!r.ok)throw new Error(await r.text());}
+async function saveWorkOrderHours(){const fid=formVal('wo-forklift'),f=fleet.find(x=>x.id===fid),hours=numOrNull(formVal('wo-hours')),date=formVal('wo-date'),serial=formVal('wo-serial').trim(),ref=formVal('wo-reference').trim(),vendor=formVal('wo-vendor').trim();if(!f){alert('Select the forklift.');return;}if(hours==null||!date){alert('Hours and Reading Date are required.');return;}if(serial&&f.serial&&serial.toUpperCase()!==String(f.serial).toUpperCase()&&!confirm(`Detected serial ${serial} does not match ${f.id} serial ${f.serial}. Continue anyway?`))return;if(!confirm(`Update ${f.id} · ${f.workroom}\nCurrent Hours: ${fmtNum(f.hours)}\nNew Hours: ${fmtNum(hours)}\nReading Date: ${fmtDate(date)}?`))return;const btn=document.getElementById('wo-save');btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken();await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:'Work Order',workroom:f.workroom,reference:ref,notes:[vendor?`Vendor: ${vendor}`:'',serial?`Serial: ${serial}`:'',formVal('wo-notes')].filter(Boolean).join(' | ')});const eventId='WO-'+f.id.replace('#','')+'-'+date.replaceAll('-','')+'-'+(ref||Date.now());await createServiceEventRecord(token,{eventId,forkliftId:f.id,date,type:/planned maint|planned maintenance|\bPM\b/i.test(workOrderText)?'PM Work Order':'Work Order / Hours',vendor,vendorPhone:'',workroom:f.workroom,reference:ref,hours,downtime:null,rentalRequired:false,description:'Work order / hour reading document',notes:formVal('wo-notes'),status:''},workOrderFile?[workOrderFile]:[]);closeWorkOrderModal();tokenCache=null;await loadData(true);alert(`${f.id} hours updated to ${fmtNum(hours)} and the work order was saved to history.`);}catch(e){console.error(e);alert('Could not save work order/hour reading: '+e.message);}finally{btn.disabled=false;btn.textContent='Confirm & Save Reading';}}
+
+function openServiceModal(mode,selected=''){serviceMode=mode;populateForkliftSelect('svc-forklift',selected);setFormVal('svc-date',todayISO());['svc-vendor','svc-vendor-phone','svc-reference','svc-hours','svc-description','svc-downtime','svc-rental-vendor','svc-rental-start','svc-rental-end','svc-rental-cost','svc-rental-invoice','svc-rental-notes','svc-notes'].forEach(id=>setFormVal(id,''));document.getElementById('svc-files').value='';document.getElementById('svc-rental-required').checked=false;setFormVal('svc-status-after','');toggleRentalFields();document.getElementById('service-modal-title').textContent=mode==='PM'?'Log PM':'Log Repair';document.getElementById('service-modal-sub').textContent=mode==='PM'?'PM is excluded from repair grading and never counts as a service call.':'One service event can create multiple expense lines while counting as one service call.';document.getElementById('svc-pm-frequency-wrap').style.display=mode==='PM'?'':'none';document.getElementById('svc-downtime-wrap').style.display=mode==='Repair'?'':'none';document.getElementById('svc-repair-options').style.display=mode==='Repair'?'':'none';document.getElementById('svc-description-label').textContent=mode==='PM'?'PM Notes / Work Performed':'Repair Description';document.getElementById('svc-expense-lines').innerHTML='';addExpenseLine(mode==='PM'?'Labor':'Labor');if(selected)serviceForkliftChanged();document.getElementById('service-modal').classList.add('open');}
+function openServiceForEditingForklift(mode){const f=fleet.find(x=>x.spId===editingForkliftSpId);openServiceModal(mode,f?.id||'');}
+function closeServiceModal(){document.getElementById('service-modal').classList.remove('open');}
+function serviceForkliftChanged(){const f=fleet.find(x=>x.id===formVal('svc-forklift'));if(!f)return;setFormVal('svc-vendor',f.serviceVendor||'');setFormVal('svc-vendor-phone',f.serviceVendorPhone||'');setFormVal('svc-pm-frequency',f.pmFrequency||'');if(f.hours!=null)setFormVal('svc-hours',f.hours);}
+function addExpenseLine(type='Labor',amount='',desc=''){const wrap=document.getElementById('svc-expense-lines'),row=document.createElement('div');row.className='expense-line';row.innerHTML=`<select class="form-input svc-line-type"><option ${type==='Labor'?'selected':''}>Labor</option><option ${type==='Parts'?'selected':''}>Parts</option><option ${type==='Freight'?'selected':''}>Freight</option><option ${type==='Rental'?'selected':''}>Rental</option><option ${type==='Other'?'selected':''}>Other</option></select><input class="form-input svc-line-amount" type="number" step="0.01" placeholder="Amount" value="${esc(amount)}"><input class="form-input svc-line-desc" placeholder="Description" value="${esc(desc)}"><button class="btn" type="button" onclick="this.parentElement.remove()">×</button>`;wrap.appendChild(row);}
+function expenseLines(){return [...document.querySelectorAll('#svc-expense-lines .expense-line')].map(r=>({type:r.querySelector('.svc-line-type').value,amount:numOrNull(r.querySelector('.svc-line-amount').value),description:r.querySelector('.svc-line-desc').value.trim()})).filter(x=>x.amount!=null&&x.amount!==0);}
+function toggleRentalFields(){document.getElementById('svc-rental-fields').style.display=document.getElementById('svc-rental-required').checked?'':'none';if(document.getElementById('svc-rental-required').checked&&!formVal('svc-rental-start'))setFormVal('svc-rental-start',formVal('svc-date')||todayISO());}
+async function createTransactionLine(token,etype,data){const body={__metadata:{type:etype},Title:data.id};assignTx(body,'Forklift ID',data.forkliftId);assignTx(body,'Transaction Date',data.date+'T12:00:00Z');assignTx(body,'Workroom',data.workroom);assignTx(body,'Invoice Number',data.reference);assignTx(body,'Amount',data.amount);assignTx(body,'Vendor',data.vendor);assignTx(body,'Category',data.category);assignTx(body,'Service Call',data.serviceCall);assignTx(body,'Hour Meter',data.hours);assignTx(body,'Downtime Days',data.downtime);assignTx(body,'Rental Required',data.rentalRequired);assignTx(body,'Description',data.description);assignTx(body,'Notes',data.notes);assignTx(body,'Service Event ID',data.serviceEventId);assignTx(body,'Rental ID',data.rentalId);const r=await fetch(TX_ITEMS_API,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Transaction line failed: '+await r.text());}
+async function createRentalRecord(token,data){const et=await listEntityType(token,RENTAL_LIST_API),body={__metadata:{type:et},Title:data.rentalId};for(const [l,v] of Object.entries({'Forklift ID':data.forkliftId,'Workroom':data.workroom,'Rental Vendor':data.vendor,'Start Date':data.startDate,'End Date':data.endDate,'Cost':data.cost,'Invoice Number':data.invoice,'Status':data.status,'Service Event ID':data.serviceEventId,'Notes':data.notes}))fieldAssign(body,rentalFieldMap,rentalFieldMeta,l,v);const r=await fetch(RENTAL_LIST_API+'/items',{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Rental record failed: '+await r.text());return (await r.json()).d;}
+async function updatePrimaryVendorIfRequested(token,f,vendor,phone){if(!vendor||vendorMatches(vendor,f.serviceVendor))return;if(!confirm(`${vendor} does not match ${f.id}'s Primary Service Vendor${f.serviceVendor?` (${f.serviceVendor})`:''}.\n\nUpdate Primary Service Vendor to ${vendor}?`))return;const et=await getListItemType(token),body={__metadata:{type:et}},vi=fieldMap[normalizeLabel('Primary Service Vendor')],pi=fieldMap[normalizeLabel('Primary Service Vendor Phone')];if(vi)body[vi]=vendor;if(pi&&phone)body[pi]=phone;await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
+async function saveServiceEvent(){const f=fleet.find(x=>x.id===formVal('svc-forklift')),date=formVal('svc-date'),vendor=formVal('svc-vendor').trim(),phone=formVal('svc-vendor-phone').trim(),ref=formVal('svc-reference').trim(),hours=numOrNull(formVal('svc-hours')),lines=expenseLines(),rentalRequired=serviceMode==='Repair'&&document.getElementById('svc-rental-required').checked;if(!f||!date){alert('Forklift and Service Date are required.');return;}if(!confirm(`Save this ${serviceMode==='PM'?'PM':'repair'} event for ${f.id} · ${f.workroom}?`))return;const btn=document.getElementById('svc-save');btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken(),eventId=`SE-${f.id.replace('#','')}-${date.replaceAll('-','')}-${Date.now()}`,files=[...document.getElementById('svc-files').files];await createServiceEventRecord(token,{eventId,forkliftId:f.id,date,type:serviceMode,vendor,vendorPhone:phone,workroom:f.workroom,reference:ref,hours,downtime:serviceMode==='Repair'?numOrNull(formVal('svc-downtime')):null,rentalRequired,description:formVal('svc-description'),notes:formVal('svc-notes'),status:formVal('svc-status-after')},files);const txetype=await listEntityType(token,TX_LIST_API);let serviceCallUsed=false;for(let i=0;i<lines.length;i++){const l=lines[i],isRental=l.type==='Rental',category=serviceMode==='PM'?'PM Service':(isRental?'Rental':'Repair / Expense'),serviceCall=serviceMode==='Repair'&&!isRental&&!serviceCallUsed;if(serviceCall)serviceCallUsed=true;await createTransactionLine(token,txetype,{id:`SVC-${eventId}-${String(i+1).padStart(2,'0')}`,forkliftId:f.id,date,workroom:f.workroom,reference:ref,amount:l.amount,vendor,category,serviceCall,hours,downtime:serviceMode==='Repair'?numOrNull(formVal('svc-downtime')):null,rentalRequired,description:`${l.type}${l.description?': '+l.description:''}`,notes:`Service Event ID: ${eventId} | Expense Type: ${l.type}${formVal('svc-notes')?' | '+formVal('svc-notes'):''}`,serviceEventId:eventId,rentalId:''});}
+      if(hours!=null&&Number(hours)!==Number(f.hours)){await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:serviceMode,workroom:f.workroom,reference:ref,notes:`${serviceMode} service event ${eventId}`});}
+      if(serviceMode==='PM'){const et=await getListItemType(token),body={__metadata:{type:et}},li=fieldMap[normalizeLabel('Last PM Date')];if(li)body[li]=date+'T00:00:00Z';const pf=formVal('svc-pm-frequency').trim(),pfi=fieldMap[normalizeLabel('PM Frequency')];if(pfi&&pf)body[pfi]=pf;await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
+      if(serviceMode==='Repair'&&formVal('svc-status-after')){const et=await getListItemType(token),body={__metadata:{type:et}},si=fieldMap[normalizeLabel('Status')];if(si)body[si]=formVal('svc-status-after');await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
+      if(rentalRequired){const rentalId=`RNT-${f.id.replace('#','')}-${(formVal('svc-rental-start')||date).replaceAll('-','')}-${Date.now()}`,rentalLine=lines.find(x=>x.type==='Rental'&&x.amount!=null),cost=numOrNull(formVal('svc-rental-cost'))??rentalLine?.amount??null,start=formVal('svc-rental-start')||date,end=formVal('svc-rental-end'),rv=formVal('svc-rental-vendor').trim(),ri=formVal('svc-rental-invoice').trim(),status=cost==null?'Cost Pending':(end?'Closed':'Open');await createRentalRecord(token,{rentalId,forkliftId:f.id,workroom:f.workroom,vendor:rv,startDate:start,endDate:end,cost,invoice:ri,status,serviceEventId:eventId,notes:formVal('svc-rental-notes')});if(cost!=null&&!rentalLine){await createTransactionLine(token,txetype,{id:`RNT-${rentalId}`,forkliftId:f.id,date:end||start,workroom:f.workroom,reference:ri,amount:cost,vendor:rv,category:'Rental',serviceCall:false,hours:null,downtime:null,rentalRequired:true,description:'Rental expense',notes:`Rental ID: ${rentalId} | Service Event ID: ${eventId}`,serviceEventId:eventId,rentalId});}}
+      await updatePrimaryVendorIfRequested(token,f,vendor,phone);closeServiceModal();tokenCache=null;await loadData(true);alert(`${serviceMode} event saved successfully.`);}catch(e){console.error(e);alert('Could not save service event: '+e.message);}finally{btn.disabled=false;btn.textContent='Save Service Event';}}
+</script>
 
 </body>
 </html>
