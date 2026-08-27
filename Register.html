@@ -141,6 +141,8 @@ tr.fleet-row:hover td{background:var(--accent-light)}
 .service-button-row{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 4px}
 @media(max-width:1000px){.service-grid{grid-template-columns:repeat(2,1fr)}.service-two{grid-template-columns:1fr}.expense-line{grid-template-columns:1fr 100px 1fr 32px}}
 
+
+.help-table{width:100%;border-collapse:collapse;font-size:11px}.help-table th{background:#f4f6f8;text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}.help-table td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}.help-topic{background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden}.help-topic summary{cursor:pointer;font-weight:700;font-size:12px;padding:12px 14px;background:#fafbfc;user-select:none}.help-topic[open] summary{border-bottom:1px solid var(--line)}.help-body{padding:11px 15px 13px;font-size:12px;line-height:1.62}.help-body p{margin:0 0 9px}.help-body p:last-child{margin-bottom:0}.help-topic.help-hidden{display:none}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
@@ -182,6 +184,10 @@ tr.fleet-row:hover td{background:var(--accent-light)}
       <div class="sidebar-section">Analysis</div>
       <div class="nav-item" data-view="aging" onclick="showView('aging',this)">
         <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><path d="M2 13h12M3 11V7h2v4M7 11V3h2v8M11 11V5h2v6"/></svg><span>Aging / Grading</span>
+      </div>
+      <div class="sidebar-section">Reference</div>
+      <div class="nav-item" data-view="help" onclick="showView('help',this)">
+        <svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.5 6.2a1.7 1.7 0 1 1 2.8 1.3c-.8.6-1.3.9-1.3 2"/><path d="M8 12h.01"/></svg><span>Help &amp; Training</span>
       </div>
       <div class="sidebar-section">Coming Later</div>
       <div class="nav-item" style="opacity:.45;cursor:default"><span>Replacement Planning</span></div>
@@ -274,6 +280,164 @@ tr.fleet-row:hover td{background:var(--accent-light)}
         <div class="section-header" style="margin-bottom:8px"><div class="section-title">Full Fleet Grading</div></div>
         <div class="table-wrap"><table id="ag-table"></table></div>
       </section>
+
+      <section id="view-help" class="hidden">
+        <div class="section-header" style="align-items:flex-start">
+          <div>
+            <div class="section-title">Help &amp; Training</div>
+            <div class="muted" style="font-size:11px;margin-top:3px">How the Forklift Manager works, when to use each workflow, and what data is saved where.</div>
+          </div>
+          <div class="section-actions"><input id="help-search" class="search-box" placeholder="Search help…" style="width:260px" oninput="filterHelp()"></div>
+        </div>
+
+        <div class="panel" style="margin-bottom:14px;border-left:4px solid #2d6cdf">
+          <div class="panel-head"><div class="panel-title">The most important rule: what is the master data?</div></div>
+          <div style="padding:14px 16px;font-size:12px;line-height:1.65">
+            <b>Forklift Transactions is the financial master record.</b> If money was spent on a forklift, the cost should ultimately exist in Transactions. That is what drives yearly expense, lifetime expense, repair expense, PM spend, rental spend, service-call counts, and Aging / Grading cost metrics.<br><br>
+            The other SharePoint lists have different jobs: <b>Forklift Fleet</b> is the current-state master for the asset; <b>Forklift Service Events</b> records the operational story of a PM or repair visit and holds its work orders/attachments; <b>Forklift Hour Readings</b> is the meter-history master; and <b>Forklift Rentals</b> tracks open rentals and costs that may not be known yet. These lists work together rather than replacing Transactions.
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:14px">
+          <div class="panel-head"><div class="panel-title">Quick Start — Which button do I use?</div></div>
+          <div style="padding:10px 14px 14px;overflow:auto">
+            <table class="help-table">
+              <thead><tr><th>What happened?</th><th>Use this</th><th>Why</th></tr></thead>
+              <tbody>
+                <tr><td>You received a normal monthly NetSuite expense export</td><td><b>Transactions → Import NetSuite CSV</b></td><td>Imports the accounting expense lines, catches duplicates, suggests PM/service-call classification, and keeps Transactions as the financial master.</td></tr>
+                <tr><td>A PM actually happened and you have service details, a work order, hours, or attachments</td><td><b>Service / Hours → Log PM</b></td><td>Creates the PM service event, stores documents, records hours, updates Last PM, and can create the related expense lines if cost is already known.</td></tr>
+                <tr><td>A repair actually happened and you want the operational history</td><td><b>Service / Hours → Log Repair</b></td><td>Captures the repair event, downtime, status, rental need, hours, documents, and any known expense lines.</td></tr>
+                <tr><td>You only received a work order with an hour reading and no invoice/cost yet</td><td><b>Upload Work Order / Hours</b></td><td>Reads the document, matches by serial when possible, proposes the service date and hours, and updates hours only after confirmation. It does not require an expense.</td></tr>
+                <tr><td>You only need to correct Current Hours manually</td><td><b>Edit Forklift</b></td><td>Changing Current Hours creates an Hour Readings history record automatically.</td></tr>
+                <tr><td>An expense was assigned to the wrong forklift/category/vendor</td><td><b>Transactions → double-click the row</b></td><td>Corrects the existing SharePoint transaction without deleting/reimporting it.</td></tr>
+                <tr><td>A rental started but the invoice has not arrived</td><td><b>Log Repair → Rental Required</b></td><td>Creates an open rental with the vendor and a Cost Pending alert so the expense is not forgotten.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="help-topics">
+          <details class="help-topic" open><summary>Do I need to Log PM or Log Repair every time?</summary><div class="help-body">
+            <p><b>For a complete operational history, use Log PM or Log Repair whenever an actual service event occurs and you have useful service information to preserve.</b> That is especially valuable when you have a work order, technician notes, an hour reading, downtime, a rental, or status information.</p>
+            <p>You do <b>not</b> need to create a fake service event just because an accounting transaction exists. If all you have is the monthly NetSuite expense, importing the transaction is enough for the financial record. Likewise, a work order with hours but no cost can be saved as service/hour history without inventing an expense.</p>
+            <p>The practical rule is: <b>Transactions answer “what did we spend?” Service Events answer “what happened to the forklift?”</b> When you have both pieces of information, both records are useful and are linked by Service Event ID.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Very important — avoiding duplicate expenses</summary><div class="help-body">
+            <p>If you enter known expense lines while logging a PM or repair, those lines are written into <b>Forklift Transactions immediately</b>. If the same invoice later appears in a NetSuite CSV, the import duplicate check should identify matching Date + Forklift ID + Invoice Number + Amount lines and mark them to Skip.</p>
+            <p>If the invoice amount is <b>not known yet</b>, leave the expense amount blank when logging the service event. Save the operational event, hours, documents, downtime, and rental information now; let the later NetSuite import become the financial transaction when the invoice posts.</p>
+            <p>Always review the NetSuite preview before importing. A changed date, invoice number, forklift assignment, or split amount can prevent an otherwise related line from matching as a duplicate.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Fleet — adding and editing forklifts</summary><div class="help-body">
+            <p>The Fleet list represents the forklift’s <b>current state</b>: ID, make/model/serial, current workroom, status, current hours, primary service vendor, PM frequency, attachments/poles, acquisition information, and notes.</p>
+            <p>Double-click a forklift to edit it. Current workrooms are validated against active Lease Manager locations for Active, Down for Repair, and Parked units. Retired/Scrapped/Sold units may remain associated with an inactive historical location.</p>
+            <p>Changing Current Hours automatically creates a reading in Forklift Hour Readings. If the new reading is lower than the current reading, the app warns you and requires confirmation.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Status definitions</summary><div class="help-body">
+            <p><b>Active:</b> In normal operating service.</p>
+            <p><b>Down for Repair:</b> Temporarily unavailable because it needs or is receiving repair. It is expected to return to service.</p>
+            <p><b>Parked:</b> Still owned and physically retained, but intentionally not being used or repaired at this time. It may return to service later. Parked units remain visible but are excluded from the Active count.</p>
+            <p><b>Retired:</b> Permanently removed from normal operating service with no intention to return it to regular use. It may still be physically on site while disposition is decided.</p>
+            <p><b>Sold:</b> Ownership has been transferred through sale.</p>
+            <p><b>Scrapped:</b> Permanently disposed of as scrap.</p>
+            <p>Disposition Date is manually entered for Retired, Sold, and Scrapped. The app does not automatically invent a disposition date.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Transactions — financial master data</summary><div class="help-body">
+            <p>Transactions contains the expense lines used for financial reporting and grading. Negative transactions/credits reduce totals. The app calculates yearly expense and lifetime expense live from the transaction history rather than storing fixed totals on the forklift.</p>
+            <p>Typical categories include PM Service, Repair / Expense, Rental, and other expense classifications. PM expense counts toward total operating expense but is excluded from Repair Expense YTD used in the Aging / Grading repair score. Rental expense also counts toward total expense but is currently kept separate from grading repair cost.</p>
+            <p>Double-click a transaction to correct fields such as forklift, workroom, vendor, invoice, amount, category, service-call flag, hours, downtime, rental required, description, URL, or notes.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>NetSuite CSV import</summary><div class="help-body">
+            <p>Use the monthly NetSuite CSV for ongoing accounting expenses. The importer reads the forklift from the Memo, vendor from Main Line Name, and presents a review screen before anything is saved.</p>
+            <p>PMs are suggested using the known PM patterns (including the common $135 PM labor charge), but the category remains editable. Repair invoices can receive one high-confidence Service Call suggestion. PMs never count as service calls.</p>
+            <p>Primary Service Vendor is compared during review. A different vendor does not automatically replace the primary vendor because one-off vendors are common.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>What exactly counts as a Service Call?</summary><div class="help-body">
+            <p>A service call represents the <b>visit/event</b>, not every invoice line. A multi-line repair invoice may contain labor, parts, freight, and other charges, but only one line should carry Service Call = Yes for that repair event.</p>
+            <p>PMs always have Service Call = No. Rental-only expense lines also do not count as service calls. This prevents service-call counts from being inflated by accounting line detail.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Log PM — when and how to use it</summary><div class="help-body">
+            <p>Use Log PM when a planned/preventive maintenance visit actually occurs and you want to preserve the operational record. Select the forklift and service date; verify the vendor; enter the work order/invoice reference; add the hour reading if known; attach the work order/invoice; enter work performed/notes; and add expense lines only if the cost is already known.</p>
+            <p>Saving a PM creates a Service Event. Any entered expense lines become PM Service Transactions. PM lines never count as service calls and are excluded from repair-cost grading. If the hours changed, Current Hours and Hour Readings are updated. Last PM Date is updated, and PM Frequency can also be maintained from the form.</p>
+            <p>If you have the PM work order today but will not know the invoice amount until accounting receives it, save the PM event <b>without an expense amount</b>. The later NetSuite CSV can supply the financial transaction.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Log Repair — when and how to use it</summary><div class="help-body">
+            <p>Use Log Repair when a repair/service visit occurs and you want more than just the eventual accounting charge. Record the service date, vendor, work order/invoice, hours, repair description, downtime, attachments, rental requirement, and optional status change.</p>
+            <p>Expense lines can be split into Labor, Parts, Freight, Rental, and Other. They remain grouped under one Service Event. The first non-rental repair expense line is the one counted as the service call; the remaining lines do not inflate the count.</p>
+            <p>If repair cost is unknown, leave the expense line amounts blank. The service event can still exist now, and the later invoice/NetSuite import can create the financial transaction.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Work Order / Hours upload</summary><div class="help-body">
+            <p>This workflow is for work orders or service documents that may contain an hour-meter reading, even when there is no invoice. The app reads text from the uploaded PDF and looks for serial number, Hours, Work Order number, Date Completed (preferred), Date Started, vendor indicators, and PM wording.</p>
+            <p>When a serial number is found, serial matching is preferred over a typed forklift number because it is safer when source data contains an incorrect unit number. The app shows its proposed match and values for you to review before saving.</p>
+            <p>The service date should come from <b>Date Completed</b> when the document contains it; otherwise Date Started; if neither can be read, the form falls back to today and you should correct it manually.</p>
+            <p>The app never needs you to invent hours. If no reliable reading is present, leave Hours blank.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Hour Readings and Current Hours</summary><div class="help-body">
+            <p>Forklift Fleet stores the latest Current Hours. Forklift Hour Readings preserves the historical readings. A reading can come from a Manual Update, PM, Repair, or Work Order.</p>
+            <p>When an accepted new reading differs from Current Hours, the app updates the Fleet record and creates the historical reading. Duplicate guards prevent an identical forklift/date/hours reading from being created twice.</p>
+            <p>Hours are also an Aging / Grading input, so keeping them current improves replacement-risk visibility.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Primary Service Vendor behavior</summary><div class="help-body">
+            <p>Log PM and Log Repair prefill the forklift’s Primary Service Vendor and phone when available. You may use a different vendor for a particular event.</p>
+            <p>If the service vendor differs from the primary vendor, the app asks whether you want to update the forklift’s Primary Service Vendor. It does not change it silently because a different vendor may be a one-time service provider.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Rentals — open cost, vendor, expense, and follow-up</summary><div class="help-body">
+            <p>When a repair requires a rental, turn on Rental Required and enter the Rental Vendor and start date. If the invoice has not arrived, leave cost blank. The rental is saved as <b>Cost Pending</b> and appears in the Open Rentals / Missing Cost follow-up queue.</p>
+            <p>Once the rental cost is known, the expense belongs in Forklift Transactions with Category = Rental so Rental Spend YTD and Lifetime Rental Spend can be calculated for the affected forklift. Rental Days YTD tracks the duration separately.</p>
+            <p>Rental expense is part of total forklift operating expense but is currently excluded from Repair Expense YTD used for the Aging / Grading repair-cost score.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>PM compliance</summary><div class="help-body">
+            <p>PM Count YTD is compared with the forklift’s PM Frequency. Expected annual counts are: Monthly 12, Quarterly 4, Every 4 months 3, Biannual 2, and Annual 1.</p>
+            <p>The app shows On Track, Behind, or Frequency Missing. PM compliance is currently an operational flag and does not add penalty points to the Aging / Grading score.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Aging / Grading</summary><div class="help-body">
+            <p>The grade combines current-year Repair Cost, Service Calls, and Total Hours. PM expense is excluded from Repair Cost for grading, and PMs never count as service calls.</p>
+            <p><b>Repair Cost points:</b> $0 = 0; $1–999 = 1; $1,000–1,999 = 2; $2,000–4,999 = 3; $5,000+ = 4.</p>
+            <p><b>Service Call points:</b> 0 = 0; 1–2 = 1; 3–4 = 2; 5–6 = 3; more than 6 = 4.</p>
+            <p><b>Hours points:</b> under 2,500 = 1; 2,500–5,999 = 2; 6,000–8,999 = 3; 9,000+ = 4.</p>
+            <p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–9 Watch; 10+ Replace Soon. Click the grade badge to see exactly why a unit received its score.</p>
+            <p>The formula is intentionally being kept stable while real fleet results are observed. A Watch or Replace Soon grade is a management signal, not an automatic replacement order.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Reports</summary><div class="help-body">
+            <p>Aging / Grading can export both Excel and a Leadership PDF. If a ROM filter is selected, the report respects that filter; otherwise it reports the full fleet.</p>
+            <p>Excel is intended for filtering, auditing, and follow-up. The Leadership PDF is intended as a concise management summary of grades, repair cost, PM compliance, and attention items.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Lease Manager integration and workrooms</summary><div class="help-body">
+            <p>Current Workroom choices for operating forklifts are pulled from active Lease Manager locations. This keeps the forklift location list aligned with the property database and reduces spelling/location drift.</p>
+            <p>Parked units are still owned and physically located somewhere, so they remain tied to a current active workroom unless/until a later transfer or disposition workflow changes that history.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Common warnings and what they mean</summary><div class="help-body">
+            <p><b>Lower Hours warning:</b> the new meter reading is below the existing reading. Continue only if the prior entry was wrong or the meter was replaced/reset.</p>
+            <p><b>Primary Vendor mismatch:</b> this service vendor differs from the forklift’s saved primary vendor. Choose whether the difference is temporary or the primary vendor should be updated.</p>
+            <p><b>Duplicate / Skip on NetSuite import:</b> a matching transaction already exists. Review it and normally leave it skipped.</p>
+            <p><b>Rental Cost Pending:</b> a rental was recorded but its cost/invoice still needs to be entered.</p>
+            <p><b>Frequency Missing:</b> PM Frequency is not set for that forklift, so the app cannot judge PM compliance.</p>
+            <p><b>Tracking Prevention / favicon 404 in Edge Console:</b> generally browser/privacy or missing tab-icon messages; they do not affect forklift records when the app otherwise loads and saves normally.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>What is not finished yet?</summary><div class="help-body">
+            <p><b>#5 Transfers / Status History</b> is the next major module. The current app can store current workroom/status and can change repair-related status, but the dedicated historical workflow for transfers and status changes is still to be designed and added.</p>
+            <p>The Help &amp; Training section should be updated after #5 so the final transfer, relocation, disposition, and status-history procedures are documented here too.</p>
+          </div></details>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -939,7 +1103,7 @@ function showFleetScope(scope,el){
       :'Live data from the Forklift Fleet SharePoint list';
   showView('fleet',el);
 }
-function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.getElementById('view-aging').classList.toggle('hidden',name!=='aging');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='aging')renderAging();}
+function showView(name,el){document.getElementById('view-dashboard').classList.toggle('hidden',name!=='dashboard');document.getElementById('view-fleet').classList.toggle('hidden',name!=='fleet');document.getElementById('view-transactions').classList.toggle('hidden',name!=='transactions');document.getElementById('view-aging').classList.toggle('hidden',name!=='aging');document.getElementById('view-help')?.classList.toggle('hidden',name!=='help');document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='aging')renderAging();}
 
 window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw new Error('Microsoft authentication library did not load.');msalApp=new msal.PublicClientApplication(MSAL_CFG);await msalApp.handleRedirectPromise();loadData();}catch(e){setConnection('bad','Startup failed');showError(e.message);}});
 </script>
@@ -1143,7 +1307,7 @@ function renderServiceView(){const open=rentals.filter(r=>!r.endDate||r.cost==nu
 function renderRentalDashboard(){let p=document.getElementById('rental-alert-panel');if(!p){const loc=document.getElementById('location-issues-panel');p=document.createElement('div');p.id='rental-alert-panel';p.className='alerts-panel';p.style.display='none';p.innerHTML='<div class="alerts-header"><h3>Rental Follow-Up</h3><span id="rental-alert-count" style="font-size:11px;color:var(--muted)"></span></div><div id="rental-alert-list"></div>';loc?.insertAdjacentElement('afterend',p);}const pending=rentals.filter(r=>r.cost==null&&!r.endDate);if(!pending.length){p.style.display='none';return;}p.style.display='';document.getElementById('rental-alert-count').textContent=`${pending.length} rental${pending.length===1?'':'s'} need cost`;document.getElementById('rental-alert-list').innerHTML=pending.map(r=>`<div class="alert-row" style="grid-template-columns:90px 1fr 1fr auto"><div><strong>${esc(r.forkliftId||'—')}</strong></div><div>${esc(r.vendor||'Rental vendor not entered')}</div><div><span class="pending-chip">Cost Pending</span></div><div>${fmtDate(r.startDate)}</div></div>`).join('');}
 const _renderAll=renderAll;renderAll=function(){_renderAll();renderServiceView();renderRentalDashboard();};
 
-showView=function(name,el){['dashboard','fleet','transactions','service','aging'].forEach(v=>document.getElementById('view-'+v)?.classList.toggle('hidden',name!==v));document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='service')renderServiceView();if(name==='aging')renderAging();};
+showView=function(name,el){['dashboard','fleet','transactions','service','aging','help'].forEach(v=>document.getElementById('view-'+v)?.classList.toggle('hidden',name!==v));document.querySelectorAll('.nav-item[data-view]').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='fleet')renderFleet();if(name==='transactions')renderTransactions();if(name==='service')renderServiceView();if(name==='aging')renderAging();if(name==='help')filterHelp();};
 
 function closeStatusGuide(){document.getElementById('status-guide-modal').classList.remove('open');}function openStatusGuide(){document.getElementById('status-guide-modal').classList.add('open');}
 function populateForkliftSelect(id,selected=''){const el=document.getElementById(id);if(!el)return;el.innerHTML='<option value="">— Select Forklift —</option>'+[...fleet].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true})).map(f=>`<option value="${esc(f.id)}" ${f.id===selected?'selected':''}>${esc(f.id)} · ${esc(f.workroom||'')} · ${esc(f.manufacturer||'')} ${esc(f.model||'')}</option>`).join('');}
@@ -1183,6 +1347,15 @@ async function saveServiceEvent(){const f=fleet.find(x=>x.id===formVal('svc-fork
       if(serviceMode==='Repair'&&formVal('svc-status-after')){const et=await getListItemType(token),body={__metadata:{type:et}},si=fieldMap[normalizeLabel('Status')];if(si)body[si]=formVal('svc-status-after');await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
       if(rentalRequired){const rentalId=`RNT-${f.id.replace('#','')}-${(formVal('svc-rental-start')||date).replaceAll('-','')}-${Date.now()}`,rentalLine=lines.find(x=>x.type==='Rental'&&x.amount!=null),cost=numOrNull(formVal('svc-rental-cost'))??rentalLine?.amount??null,start=formVal('svc-rental-start')||date,end=formVal('svc-rental-end'),rv=formVal('svc-rental-vendor').trim(),ri=formVal('svc-rental-invoice').trim(),status=cost==null?'Cost Pending':(end?'Closed':'Open');await createRentalRecord(token,{rentalId,forkliftId:f.id,workroom:f.workroom,vendor:rv,startDate:start,endDate:end,cost,invoice:ri,status,serviceEventId:eventId,notes:formVal('svc-rental-notes')});if(cost!=null&&!rentalLine){await createTransactionLine(token,txetype,{id:`RNT-${rentalId}`,forkliftId:f.id,date:end||start,workroom:f.workroom,reference:ri,amount:cost,vendor:rv,category:'Rental',serviceCall:false,hours:null,downtime:null,rentalRequired:true,description:'Rental expense',notes:`Rental ID: ${rentalId} | Service Event ID: ${eventId}`,serviceEventId:eventId,rentalId});}}
       await updatePrimaryVendorIfRequested(token,f,vendor,phone);closeServiceModal();tokenCache=null;await loadData(true);alert(`${serviceMode} event saved successfully.`);}catch(e){console.error(e);alert('Could not save service event: '+e.message);}finally{btn.disabled=false;btn.textContent='Save Service Event';}}
+
+function filterHelp(){
+  const q=String(document.getElementById('help-search')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('#help-topics .help-topic').forEach(d=>{
+    const hit=!q||d.textContent.toLowerCase().includes(q);
+    d.classList.toggle('help-hidden',!hit);
+    if(q&&hit)d.open=true;
+  });
+}
 </script>
 
 </body>
