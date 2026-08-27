@@ -106,7 +106,19 @@ tr.fleet-row:hover td{background:var(--accent-light)}
 .ag-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 @media(max-width:1050px){.ag-grid{grid-template-columns:1fr}.import-modal .modal{width:99vw}}
 
+
+/* --- Aging/Grading completion + transaction edit --- */
+.clickable-badge{cursor:pointer;box-shadow:0 0 0 1px rgba(0,0,0,.06) inset}.clickable-badge:hover{filter:brightness(.96);transform:translateY(-1px)}
+.pm-chip{display:inline-flex;align-items:center;padding:2px 7px;border-radius:12px;font-size:9px;font-weight:600;white-space:nowrap}.pm-on{background:var(--good-light);color:var(--good)}.pm-behind{background:var(--danger-light);color:var(--danger)}.pm-missing{background:var(--warn-light);color:var(--warn)}
+.guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.guide-box{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--surface)}.guide-box h4{font-size:12px;margin-bottom:7px}.guide-line{display:flex;justify-content:space-between;gap:14px;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px}.guide-line:last-child{border-bottom:0}.guide-note{font-size:11px;color:var(--muted);line-height:1.5;background:var(--surface2);padding:10px;border-radius:7px}
+.why-total{font-size:15px;font-weight:600;padding:10px 12px;background:var(--accent-light);border-radius:7px;margin-top:8px}.why-row{display:grid;grid-template-columns:1fr auto;gap:16px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}.why-row:last-child{border-bottom:0}
+.report-menu{position:relative}.report-pop{display:none;position:absolute;right:0;top:36px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;z-index:80;min-width:190px}.report-pop.open{display:block}.report-pop button{display:block;width:100%;text-align:left;border:0;background:none;padding:8px 10px;border-radius:5px;font:11px var(--sans);cursor:pointer}.report-pop button:hover{background:var(--surface2)}
+.edit-hint{font-size:10px;color:var(--muted);margin-top:5px}
+@media(max-width:800px){.guide-grid{grid-template-columns:1fr}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -189,13 +201,20 @@ tr.fleet-row:hover td{background:var(--accent-light)}
           </div>
         </div>
         <div class="stats-row" id="tx-stats-row" style="margin-bottom:12px"></div>
+        <div class="edit-hint">Double-click any transaction row to edit/correct it.</div>
         <div class="table-wrap"><table id="transactions-table"></table></div>
       </section>
 
       <section id="view-aging" class="hidden">
         <div class="section-header" style="margin-bottom:10px">
-          <div><div class="section-title">Aging / Grading</div><div class="muted" style="font-size:11px;margin-top:3px">Current-year repair cost excludes PM; PM never counts as a service call</div></div>
-          <div class="section-actions"><input id="ag-search" class="search-box" placeholder="Search forklift or workroom…" style="width:230px" oninput="renderAging()"><select id="ag-grade-filter" class="search-box" onchange="renderAging()"><option value="">All grades</option><option>Excellent</option><option>Good</option><option>Watch</option><option>Replace Soon</option></select></div>
+          <div><div class="section-title">Aging / Grading</div><div class="muted" style="font-size:11px;margin-top:3px">Current-year repair cost excludes PM; PM never counts as a service call · Click a grade for its score breakdown</div></div>
+          <div class="section-actions">
+            <button class="btn" onclick="openScoringGuide()">Scoring Guide</button>
+            <div class="report-menu"><button class="btn primary" onclick="toggleReportMenu(event)">Export Report ▾</button><div class="report-pop" id="report-pop"><button onclick="exportAgingExcel()">Excel (.xlsx)</button><button onclick="exportAgingPDF()">Leadership PDF</button></div></div>
+            <input id="ag-search" class="search-box" placeholder="Search forklift or workroom…" style="width:210px" oninput="renderAging()">
+            <select id="ag-rom-filter" class="search-box" onchange="renderAging()"><option value="">All ROMs</option></select>
+            <select id="ag-grade-filter" class="search-box" onchange="renderAging()"><option value="">All grades</option><option>Excellent</option><option>Good</option><option>Watch</option><option>Replace Soon</option></select>
+          </div>
         </div>
         <div class="stats-row" id="ag-stats-row" style="margin-bottom:14px"></div>
         <div class="ag-grid">
@@ -221,8 +240,8 @@ const LEASE_ITEMS_API=LEASE_LIST_API+"/items";
 const TX_LIST_API=SP_SITE+"/_api/web/lists/getbytitle('Forklift%20Transactions')";
 const TX_ITEMS_API=TX_LIST_API+"/items";
 const SP_SCOPES=["https://serviceprosgroup.sharepoint.com/AllSites.Write"];
-let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},activeWorkrooms=[],sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
-let transactions=[],txFieldMap={},txFieldMeta={},txSortKey='transactionDate',txSortDir=-1,txLoadError='',importRows=[];
+let msalApp,tokenCache=null,fleet=[],fieldMap={},fieldMeta={},activeWorkrooms=[],workroomROM={},sortKey='id',sortDir=1,fleetScope='all',editingForkliftSpId=null;
+let transactions=[],txFieldMap={},txFieldMeta={},txSortKey='transactionDate',txSortDir=-1,txLoadError='',importRows=[],editingTransactionSpId=null;
 
 function setConnection(state,text){const d=document.getElementById('conn-dot'),t=document.getElementById('conn-text');d.className='conn-dot '+state;t.textContent=text;}
 function showError(msg){const e=document.getElementById('error-box');e.style.display='block';e.textContent=msg;}
@@ -274,6 +293,9 @@ function mapTransaction(i){
     amount:num(txv(i,'Amount')),
     serviceCall:(()=>{const v=txv(i,'Service Call');if(typeof v==='boolean')return v;const x=String(v??'').trim().toLowerCase();return ['y','yes','true','1'].includes(x);})(),
     hourMeter:num(txv(i,'Hour Meter')),
+    downtimeDays:num(txv(i,'Downtime Days')),
+    rentalRequired:(()=>{const v=txv(i,'Rental Required');if(typeof v==='boolean')return v;const x=String(v??'').trim().toLowerCase();return ['y','yes','true','1'].includes(x);})(),
+    invoiceURL:String(txv(i,'Invoice URL')||''),
     description:String(txv(i,'Description')||''),
     notes:String(txv(i,'Notes')||''),
     workroom:String(txv(i,'Workroom')||'')
@@ -298,7 +320,7 @@ async function loadTransactions(token){
 async function loadActiveWorkrooms(token){
   // Lease Manager source of truth:
   // Location = workroom name; LeaseStatus = Active / Inactive.
-  let url=LEASE_ITEMS_API+"?$select=Id,Location,LeaseStatus&$top=500&$orderby=Location",all=[];
+  let url=LEASE_ITEMS_API+"?$select=Id,Location,LeaseStatus,ROM&$top=500&$orderby=Location",all=[];
   while(url){
     const r=await fetch(url,{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});
     if(!r.ok)throw new Error('Could not read active locations from Lease Manager (HTTP '+r.status+').');
@@ -306,6 +328,8 @@ async function loadActiveWorkrooms(token){
     all=all.concat(d.d.results);
     url=d.d.__next||null;
   }
+  workroomROM={};
+  all.forEach(x=>{const loc=String(x.Location||'').trim();if(loc)workroomROM[loc]=String(x.ROM||'').trim();});
   activeWorkrooms=[...new Set(
     all
       .filter(x=>String(x.LeaseStatus||'Active').trim().toLowerCase()==='active')
@@ -452,6 +476,11 @@ function serviceCallScore(v){v=Number(v||0);if(v<=0)return 0;if(v<=2)return 1;if
 function hoursScore(v){v=Number(v||0);if(v<2500)return 1;if(v<6000)return 2;if(v<9000)return 3;return 4;}
 function gradeFromScore(s){if(s<=3)return'Excellent';if(s<=6)return'Good';if(s<=9)return'Watch';return'Replace Soon';}
 function gradeClass(g){return g==='Excellent'?'grade-excellent':g==='Good'?'grade-good':g==='Watch'?'grade-watch':'grade-replace';}
+function pmCompliance(m,f){
+  if(m.pmExpectedToDate==null)return {label:'Frequency Missing',cls:'pm-missing'};
+  return m.pmCountYTD>=m.pmExpectedToDate?{label:'On Track',cls:'pm-on'}:{label:'Behind',cls:'pm-behind'};
+}
+function forkliftROM(f){return workroomROM[String(f.workroom||'').trim()]||'';}
 function gradingRow(f){const m=forkliftMetrics(f);const rs=repairCostScore(m.repairYTD),ss=serviceCallScore(m.serviceYTD),hs=hoursScore(f.hours),score=rs+ss+hs;return {f,m,rs,ss,hs,score,grade:gradeFromScore(score)};}
 function vendorNorm(v){return String(v||'').toLowerCase().replace(/\b(incorporated|inc|llc|ltd|company|co|corp|corporation|equipment|lift trucks?|services?)\b/g,'').replace(/[^a-z0-9]/g,'');}
 function vendorMatches(a,b){const x=vendorNorm(a),y=vendorNorm(b);return !!x&&!!y&&(x===y||x.includes(y)||y.includes(x));}
@@ -490,7 +519,7 @@ function renderTransactions(){
   rows.sort((a,b)=>{const av=txSortValue(a,txSortKey),bv=txSortValue(b,txSortKey);return av<bv?-txSortDir:av>bv?txSortDir:0;});renderTxStats(rows);
   const cols=[['transactionDate','Date'],['forkliftId','Forklift ID'],['workroom','Workroom'],['invoiceNumber','Invoice Number'],['amount','Amount'],['serviceCall','Service Call'],['vendor','Vendor'],['category','Category'],['hourMeter','Hour Meter'],['description','Description'],['notes','Notes']];
   const head='<thead><tr>'+cols.map(([k,l])=>`<th class="sort ${txSortKey===k?(txSortDir===1?'asc':'desc'):''}" onclick="setTxSort('${k}')">${l}</th>`).join('')+'</tr></thead>';
-  const body=rows.map(t=>'<tr>'+cols.map(([k])=>{let v=t[k];if(k==='transactionDate')v=fmtDate(v);else if(k==='amount')v=fmtMoney(v);else if(k==='serviceCall')v=(t.serviceCall&&!isPM(t,pmSet))?'✓':'—';else if(k==='category')v=effectiveCategory(t,pmSet);else if(k==='hourMeter')v=(v===null||v===undefined)?'—':fmtNum(v);else v=v||'—';const cls=['forkliftId','amount','hourMeter'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
+  const body=rows.map(t=>`<tr class="fleet-row" ondblclick="openTransactionModal(${t.spId})">`+cols.map(([k])=>{let v=t[k];if(k==='transactionDate')v=fmtDate(v);else if(k==='amount')v=fmtMoney(v);else if(k==='serviceCall')v=(t.serviceCall&&!isPM(t,pmSet))?'✓':'—';else if(k==='category')v=effectiveCategory(t,pmSet);else if(k==='hourMeter')v=(v===null||v===undefined)?'—':fmtNum(v);else v=v||'—';const cls=['forkliftId','amount','hourMeter'].includes(k)?'mono':'';return `<td class="${cls}">${esc(v)}</td>`;}).join('')+'</tr>').join('');
   table.innerHTML=head+'<tbody>'+body+(rows.length?'':'<tr><td colspan="11" class="empty">No transactions match</td></tr>')+'</tbody>';
 }
 
@@ -507,23 +536,67 @@ function renderForkliftHistory(f){
     <div class="metric-card"><div class="k">PM Count YTD</div><div class="v">${m.pmCountYTD} / ${expected}</div><div class="sub">${esc(f.pmFrequency||'Frequency not set')}${pace?' · '+pace:''}</div></div>`;
   const rows=[...m.rows].sort((a,b)=>(b.transactionDate||'').localeCompare(a.transactionDate||'')||b.spId-a.spId);
   const cols=['Date','Vendor','Invoice #','Category','Amount','Service Call','Workroom','Notes'];
-  document.getElementById('ff-history-table').innerHTML='<thead><tr>'+cols.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>'+rows.map(t=>`<tr><td>${fmtDate(t.transactionDate)}</td><td>${esc(t.vendor||'—')}</td><td class="mono">${esc(t.invoiceNumber||'—')}</td><td>${esc(effectiveCategory(t,pmSet))}</td><td class="mono">${fmtMoney(t.amount)}</td><td>${t.serviceCall&&!isPM(t,pmSet)?'✓':'—'}</td><td>${esc(t.workroom||'—')}</td><td>${esc(t.notes||t.description||'—')}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="8" class="empty">No transaction history</td></tr>')+'</tbody>';
+  document.getElementById('ff-history-table').innerHTML='<thead><tr>'+cols.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>'+rows.map(t=>`<tr class="fleet-row" ondblclick="openTransactionModal(${t.spId})"><td>${fmtDate(t.transactionDate)}</td><td>${esc(t.vendor||'—')}</td><td class="mono">${esc(t.invoiceNumber||'—')}</td><td>${esc(effectiveCategory(t,pmSet))}</td><td class="mono">${fmtMoney(t.amount)}</td><td>${t.serviceCall&&!isPM(t,pmSet)?'✓':'—'}</td><td>${esc(t.workroom||'—')}</td><td>${esc(t.notes||t.description||'—')}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="8" class="empty">No transaction history</td></tr>')+'</tbody>';
 }
 
-function renderAging(){
+function populateAgingROMFilter(){
+  const el=document.getElementById('ag-rom-filter');if(!el)return;
+  const cur=el.value;const roms=[...new Set(fleet.map(f=>forkliftROM(f)).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  el.innerHTML='<option value="">All ROMs</option>'+roms.map(r=>`<option value="${esc(r)}"${r===cur?' selected':''}>${esc(r)}</option>`).join('');
+}
+function agingRowsForCurrentFilters(){
   const rows=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).map(gradingRow);
-  const q=(document.getElementById('ag-search')?.value||'').toLowerCase(),gf=document.getElementById('ag-grade-filter')?.value||'';
-  const filtered=rows.filter(r=>(!gf||r.grade===gf)&&(!q||`${r.f.id} ${r.f.workroom} ${r.f.manufacturer} ${r.f.model}`.toLowerCase().includes(q)));
+  const q=(document.getElementById('ag-search')?.value||'').toLowerCase(),gf=document.getElementById('ag-grade-filter')?.value||'',rom=document.getElementById('ag-rom-filter')?.value||'';
+  return rows.filter(r=>(!gf||r.grade===gf)&&(!rom||forkliftROM(r.f)===rom)&&(!q||`${r.f.id} ${r.f.workroom} ${r.f.manufacturer} ${r.f.model}`.toLowerCase().includes(q)));
+}
+function renderAging(){
+  const rows=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).map(gradingRow);populateAgingROMFilter();
+  const filtered=agingRowsForCurrentFilters();
   const counts={Excellent:0,Good:0,Watch:0,'Replace Soon':0};rows.forEach(r=>counts[r.grade]++);
-  const totalRepair=rows.reduce((s,r)=>s+r.m.repairYTD,0);const withFreq=rows.filter(r=>r.m.pmExpectedToDate!=null),compliant=withFreq.filter(r=>r.m.pmCountYTD>=r.m.pmExpectedToDate).length;
-  document.getElementById('ag-stats-row').innerHTML=`<div class="stat-card good"><div class="stat-label">Excellent</div><div class="stat-value">${counts.Excellent}</div></div><div class="stat-card accent"><div class="stat-label">Good</div><div class="stat-value">${counts.Good}</div></div><div class="stat-card warn"><div class="stat-label">Watch</div><div class="stat-value">${counts.Watch}</div></div><div class="stat-card danger"><div class="stat-label">Replace Soon</div><div class="stat-value">${counts['Replace Soon']}</div></div><div class="stat-card"><div class="stat-label">YTD Repair Spend</div><div class="stat-value" style="font-size:20px">${fmtMoney(totalRepair)}</div><div class="stat-sub">PM excluded</div></div><div class="stat-card"><div class="stat-label">PM Compliance</div><div class="stat-value">${withFreq.length?Math.round(compliant/withFreq.length*100):0}%</div><div class="stat-sub">On pace among units with frequency</div></div>`;
+  const totalRepair=rows.reduce((s,r)=>s+r.m.repairYTD,0),withFreq=rows.filter(r=>r.m.pmExpectedToDate!=null),compliant=withFreq.filter(r=>r.m.pmCountYTD>=r.m.pmExpectedToDate).length,behind=withFreq.length-compliant,missing=rows.length-withFreq.length;
+  document.getElementById('ag-stats-row').innerHTML=`<div class="stat-card good"><div class="stat-label">Excellent</div><div class="stat-value">${counts.Excellent}</div></div><div class="stat-card accent"><div class="stat-label">Good</div><div class="stat-value">${counts.Good}</div></div><div class="stat-card warn"><div class="stat-label">Watch</div><div class="stat-value">${counts.Watch}</div></div><div class="stat-card danger"><div class="stat-label">Replace Soon</div><div class="stat-value">${counts['Replace Soon']}</div></div><div class="stat-card"><div class="stat-label">YTD Repair Spend</div><div class="stat-value" style="font-size:20px">${fmtMoney(totalRepair)}</div><div class="stat-sub">PM excluded</div></div><div class="stat-card"><div class="stat-label">PM Compliance</div><div class="stat-value">${withFreq.length?Math.round(compliant/withFreq.length*100):0}%</div><div class="stat-sub">${compliant} on track · ${behind} behind · ${missing} missing frequency</div></div>`;
   const maxCount=Math.max(...Object.values(counts),1);document.getElementById('grade-chart').innerHTML=Object.entries(counts).map(([g,c])=>`<div class="bar-row"><span>${g}</span><div class="bar-track"><div class="bar-fill ${g==='Replace Soon'?'danger':g==='Watch'?'warn':g==='Excellent'?'good':''}" style="width:${c/maxCount*100}%"></div></div><span class="mono">${c}</span></div>`).join('');
   const top=[...rows].sort((a,b)=>b.m.repairYTD-a.m.repairYTD).slice(0,10),maxRepair=Math.max(...top.map(r=>Math.max(r.m.repairYTD,0)),1);document.getElementById('repair-chart').innerHTML=top.map(r=>`<div class="bar-row"><span>${esc(r.f.id)} · ${esc(r.f.workroom||'')}</span><div class="bar-track"><div class="bar-fill ${r.m.repairYTD>=5000?'danger':r.m.repairYTD>=2000?'warn':''}" style="width:${Math.max(r.m.repairYTD,0)/maxRepair*100}%"></div></div><span class="mono">${fmtMoney(r.m.repairYTD)}</span></div>`).join('');
-  const cols=['Forklift','Workroom','Hours','Repair Cost YTD','Service Calls','PM Count / Expected','Score','Grade'];
-  const tr=r=>`<tr class="fleet-row" ondblclick="openForkliftModal(${r.f.spId})"><td class="mono"><strong>${esc(r.f.id)}</strong></td><td>${esc(r.f.workroom||'—')}</td><td class="mono">${fmtNum(r.f.hours)}</td><td class="mono">${fmtMoney(r.m.repairYTD)}</td><td class="mono">${r.m.serviceYTD}</td><td class="mono">${r.m.pmCountYTD} / ${r.m.pmExpected??'—'}</td><td class="mono">${r.score}</td><td><span class="grade-badge ${gradeClass(r.grade)}">${r.grade}</span></td></tr>`;
+  const cols=['Forklift','Workroom','ROM','Hours','Repair Cost YTD','Service Calls','PM Count / Expected','PM Compliance','Score','Grade'];
+  const tr=r=>{const pm=pmCompliance(r.m,r.f);return `<tr class="fleet-row" ondblclick="openForkliftModal(${r.f.spId})"><td class="mono"><strong>${esc(r.f.id)}</strong></td><td>${esc(r.f.workroom||'—')}</td><td>${esc(forkliftROM(r.f)||'—')}</td><td class="mono">${fmtNum(r.f.hours)}</td><td class="mono">${fmtMoney(r.m.repairYTD)}</td><td class="mono">${r.m.serviceYTD}</td><td class="mono">${r.m.pmCountYTD} / ${r.m.pmExpected??'—'}</td><td><span class="pm-chip ${pm.cls}">${pm.label}</span></td><td class="mono">${r.score}</td><td><span class="grade-badge clickable-badge ${gradeClass(r.grade)}" onclick="event.stopPropagation();openWhyGrade('${esc(r.f.id)}')">${r.grade}</span></td></tr>`;};
   const att=rows.filter(r=>r.grade==='Watch'||r.grade==='Replace Soon').sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD);
-  document.getElementById('ag-attention-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+att.map(tr).join('')+(att.length?'':'<tr><td colspan="8" class="empty">No Watch / Replace Soon units</td></tr>')+'</tbody>';
-  document.getElementById('ag-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+filtered.sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD).map(tr).join('')+'</tbody>';
+  document.getElementById('ag-attention-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+att.map(tr).join('')+(att.length?'':'<tr><td colspan="10" class="empty">No Watch / Replace Soon units</td></tr>')+'</tbody>';
+  document.getElementById('ag-table').innerHTML='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>'+filtered.sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD).map(tr).join('')+(filtered.length?'':'<tr><td colspan="10" class="empty">No forklifts match</td></tr>')+'</tbody>';
+}
+
+function openScoringGuide(){document.getElementById('scoring-guide-modal').classList.add('open');}
+function closeScoringGuide(){document.getElementById('scoring-guide-modal').classList.remove('open');}
+function openWhyGrade(fid){
+  const f=fleet.find(x=>x.id===fid);if(!f)return;const r=gradingRow(f),pm=pmCompliance(r.m,f);
+  document.getElementById('why-grade-title').textContent=`${f.id} — ${f.workroom||''}`;
+  document.getElementById('why-grade-body').innerHTML=`
+    <div class="why-row"><span>Hours: ${fmtNum(f.hours)}</span><strong>${r.hs} points</strong></div>
+    <div class="why-row"><span>Repair Cost YTD: ${fmtMoney(r.m.repairYTD)}</span><strong>${r.rs} points</strong></div>
+    <div class="why-row"><span>Service Calls YTD: ${r.m.serviceYTD}</span><strong>${r.ss} points</strong></div>
+    <div class="why-total">Total Score: ${r.score} → ${r.grade}</div>
+    <div class="guide-note" style="margin-top:12px">PM expense is excluded from Repair Cost YTD. PM visits never count as service calls. PM compliance is shown separately and does not affect the grade. Current PM status: <strong>${pm.label}</strong>.</div>`;
+  document.getElementById('why-grade-modal').classList.add('open');
+}
+function closeWhyGrade(){document.getElementById('why-grade-modal').classList.remove('open');}
+function toggleReportMenu(e){e?.stopPropagation();document.getElementById('report-pop').classList.toggle('open');}
+document.addEventListener('click',()=>document.getElementById('report-pop')?.classList.remove('open'));
+function agingReportRows(){return agingRowsForCurrentFilters().sort((a,b)=>b.score-a.score||b.m.repairYTD-a.m.repairYTD);}
+function agingReportName(ext){const rom=document.getElementById('ag-rom-filter')?.value||'All';return `Forklift_Aging_Grading_${rom.replace(/[^A-Za-z0-9]+/g,'_')}_${new Date().toISOString().slice(0,10)}.${ext}`;}
+function reportDataRows(rows){return rows.map(r=>{const pm=pmCompliance(r.m,r.f);return {'Forklift':r.f.id,'Workroom':r.f.workroom,'ROM':forkliftROM(r.f),'Manufacturer':r.f.manufacturer,'Model':r.f.model,'Serial':r.f.serial,'Hours':r.f.hours??'','Repair Cost YTD':Number(r.m.repairYTD.toFixed(2)),'Service Calls YTD':r.m.serviceYTD,'PM Spend YTD':Number(r.m.pmSpendYTD.toFixed(2)),'PM Count YTD':r.m.pmCountYTD,'PM Frequency':r.f.pmFrequency,'Expected PM / Year':r.m.pmExpected??'','PM Compliance':pm.label,'Score':r.score,'Grade':r.grade};});}
+function exportAgingExcel(){
+  document.getElementById('report-pop')?.classList.remove('open');if(typeof XLSX==='undefined'){alert('Excel export library did not load. Refresh the page and try again.');return;}
+  const rows=agingReportRows(),data=reportDataRows(rows),wb=XLSX.utils.book_new(),ws=XLSX.utils.json_to_sheet(data);ws['!cols']=[10,22,18,16,18,20,10,16,15,14,13,16,16,16,9,14].map(w=>({wch:w}));XLSX.utils.book_append_sheet(wb,ws,'Fleet Grading');
+  const summary=[['Forklift Aging / Grading Report'],['Snapshot',new Date().toLocaleDateString()],['ROM Filter',document.getElementById('ag-rom-filter')?.value||'All ROMs'],[],['Grade','Count']];const counts={Excellent:0,Good:0,Watch:0,'Replace Soon':0};rows.forEach(r=>counts[r.grade]++);Object.entries(counts).forEach(x=>summary.push(x));summary.push([],['Scoring Note','PM expense excluded from repair-cost scoring; PM visits excluded from service-call count.']);XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(summary),'Summary');XLSX.writeFile(wb,agingReportName('xlsx'));
+}
+function exportAgingPDF(){
+  document.getElementById('report-pop')?.classList.remove('open');const jspdf=window.jspdf;if(!jspdf?.jsPDF){alert('PDF export library did not load. Refresh the page and try again.');return;}
+  const rows=agingReportRows(),all=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status)).map(gradingRow),{jsPDF}=jspdf,doc=new jsPDF({orientation:'landscape',unit:'pt',format:'letter'});const rom=document.getElementById('ag-rom-filter')?.value||'All ROMs';
+  doc.setFontSize(16);doc.text('Forklift Aging / Grading Report',36,36);doc.setFontSize(9);doc.text(`Snapshot: ${new Date().toLocaleDateString()}    ROM: ${rom}`,36,52);
+  const counts={Excellent:0,Good:0,Watch:0,'Replace Soon':0};rows.forEach(r=>counts[r.grade]++);doc.text(`Excellent ${counts.Excellent}   Good ${counts.Good}   Watch ${counts.Watch}   Replace Soon ${counts['Replace Soon']}`,36,68);doc.text('PM expense is excluded from repair-cost scoring; PM visits do not count as service calls.',36,82);
+  const attention=rows.filter(r=>r.grade==='Watch'||r.grade==='Replace Soon');doc.autoTable({startY:96,head:[['Attention','Workroom','ROM','Hours','Repair YTD','Calls','PM','Score','Grade']],body:attention.map(r=>{const pm=pmCompliance(r.m,r.f);return [r.f.id,r.f.workroom,forkliftROM(r.f)||'—',fmtNum(r.f.hours),fmtMoney(r.m.repairYTD),r.m.serviceYTD,pm.label,r.score,r.grade]}),styles:{fontSize:7,cellPadding:3},headStyles:{fillColor:[30,30,30]}});
+  const top=[...rows].sort((a,b)=>b.m.repairYTD-a.m.repairYTD).slice(0,10);doc.autoTable({startY:doc.lastAutoTable.finalY+12,head:[['Top Repair Cost','Workroom','Repair Cost YTD','Service Calls','Grade']],body:top.map(r=>[r.f.id,r.f.workroom,fmtMoney(r.m.repairYTD),r.m.serviceYTD,r.grade]),styles:{fontSize:7,cellPadding:3}});
+  const pmIssues=rows.filter(r=>pmCompliance(r.m,r.f).label!=='On Track');doc.autoTable({startY:doc.lastAutoTable.finalY+12,head:[['PM Issue','Workroom','Frequency','Count YTD','Expected / Year','Status']],body:pmIssues.map(r=>{const pm=pmCompliance(r.m,r.f);return [r.f.id,r.f.workroom,r.f.pmFrequency||'—',r.m.pmCountYTD,r.m.pmExpected??'—',pm.label]}),styles:{fontSize:7,cellPadding:3}});
+  doc.addPage('letter','landscape');doc.setFontSize(13);doc.text('Full Fleet Detail',36,34);doc.autoTable({startY:44,head:[['Forklift','Workroom','ROM','Hours','Repair YTD','Calls','PM Count','PM Status','Score','Grade']],body:rows.map(r=>{const pm=pmCompliance(r.m,r.f);return [r.f.id,r.f.workroom,forkliftROM(r.f)||'—',fmtNum(r.f.hours),fmtMoney(r.m.repairYTD),r.m.serviceYTD,`${r.m.pmCountYTD}/${r.m.pmExpected??'—'}`,pm.label,r.score,r.grade]}),styles:{fontSize:6.5,cellPadding:2.5},headStyles:{fillColor:[30,30,30]}});doc.save(agingReportName('pdf'));
 }
 
 function parseCSV(text){
@@ -573,6 +646,18 @@ async function importNetSuiteRows(){const pending=importRows.filter(r=>!r.duplic
     if(failed.length){console.table(failed);alert(`Imported ${created}. ${failed.length} failed — see Console.`);}else alert(`Imported ${created} NetSuite transaction lines successfully.`);closeImportModal();tokenCache=null;await loadData(true);
   }catch(e){console.error(e);alert('Import failed: '+e.message);}finally{btn.disabled=false;btn.textContent='Import Transactions';}}
 
+
+function openTransactionModal(spId){
+  const t=transactions.find(x=>x.spId===spId);if(!t)return;editingTransactionSpId=spId;
+  setFormVal('txe-date',t.transactionDate);setFormVal('txe-forklift',t.forkliftId);setFormVal('txe-workroom',t.workroom);setFormVal('txe-vendor',t.vendor);setFormVal('txe-invoice',t.invoiceNumber);setFormVal('txe-amount',t.amount??'');setFormVal('txe-category',effectiveCategory(t,pmGroupSet()));document.getElementById('txe-service').checked=!!t.serviceCall;setFormVal('txe-hours',t.hourMeter??'');setFormVal('txe-downtime',t.downtimeDays??'');document.getElementById('txe-rental').checked=!!t.rentalRequired;setFormVal('txe-description',t.description);setFormVal('txe-url',t.invoiceURL);setFormVal('txe-notes',t.notes);document.getElementById('transaction-edit-modal').classList.add('open');
+}
+function closeTransactionModal(){document.getElementById('transaction-edit-modal').classList.remove('open');editingTransactionSpId=null;}
+async function saveTransactionEdit(){
+  const t=transactions.find(x=>x.spId===editingTransactionSpId);if(!t)return;const fid=formVal('txe-forklift').trim(),category=formVal('txe-category').trim();if(!formVal('txe-date')){alert('Transaction Date is required.');return;}if(!confirm(`Save changes to transaction ${t.transactionId||'#'+t.spId}?`))return;
+  const btn=document.getElementById('txe-save');btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken(),li=await fetch(TX_LIST_API+'?$select=ListItemEntityTypeFullName',{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}}).then(r=>r.json()),body={__metadata:{type:li.d.ListItemEntityTypeFullName}};assignTx(body,'Forklift ID',fid);assignTx(body,'Transaction Date',formVal('txe-date')+'T12:00:00Z');assignTx(body,'Workroom',formVal('txe-workroom').trim());assignTx(body,'Vendor',formVal('txe-vendor').trim());assignTx(body,'Invoice Number',formVal('txe-invoice').trim());assignTx(body,'Amount',numOrNull(formVal('txe-amount')));assignTx(body,'Category',category);assignTx(body,'Service Call',category==='PM Service'?false:document.getElementById('txe-service').checked);assignTx(body,'Hour Meter',numOrNull(formVal('txe-hours')));assignTx(body,'Downtime Days',numOrNull(formVal('txe-downtime')));assignTx(body,'Rental Required',document.getElementById('txe-rental').checked);assignTx(body,'Description',formVal('txe-description'));assignTx(body,'Invoice URL',formVal('txe-url'));assignTx(body,'Notes',formVal('txe-notes'));
+    const r=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('SharePoint update failed: '+await r.text());closeTransactionModal();tokenCache=null;await loadData(true);if(editingForkliftSpId){const ff=fleet.find(x=>x.spId===editingForkliftSpId);if(ff)renderForkliftHistory(ff);}
+  }catch(e){console.error(e);alert('Could not save transaction: '+e.message);}finally{btn.disabled=false;btn.textContent='Save Transaction';}
+}
 
 function formVal(id){return document.getElementById(id)?.value??'';}
 function setFormVal(id,v){const e=document.getElementById(id);if(e)e.value=(v===null||v===undefined)?'':v;}
@@ -882,6 +967,12 @@ window.addEventListener('load',async()=>{try{if(typeof msal==='undefined')throw 
   </div>
 </div>
 
+
+<div class="modal-backdrop" id="scoring-guide-modal" onclick="if(event.target===this)closeScoringGuide()"><div class="modal" style="max-width:680px"><div class="modal-head"><div class="modal-title">Aging / Grading Scoring Guide</div><button class="modal-close" onclick="closeScoringGuide()">×</button></div><div class="modal-body"><div class="guide-grid"><div class="guide-box"><h4>Repair Cost YTD</h4><div class="guide-line"><span>$0</span><strong>0 pts</strong></div><div class="guide-line"><span>$1–$999</span><strong>1 pt</strong></div><div class="guide-line"><span>$1,000–$1,999</span><strong>2 pts</strong></div><div class="guide-line"><span>$2,000–$4,999</span><strong>3 pts</strong></div><div class="guide-line"><span>$5,000+</span><strong>4 pts</strong></div></div><div class="guide-box"><h4>Service Calls YTD</h4><div class="guide-line"><span>0</span><strong>0 pts</strong></div><div class="guide-line"><span>1–2</span><strong>1 pt</strong></div><div class="guide-line"><span>3–4</span><strong>2 pts</strong></div><div class="guide-line"><span>5–6</span><strong>3 pts</strong></div><div class="guide-line"><span>7+</span><strong>4 pts</strong></div></div><div class="guide-box"><h4>Total Hours</h4><div class="guide-line"><span>&lt; 2,500</span><strong>1 pt</strong></div><div class="guide-line"><span>2,500–5,999</span><strong>2 pts</strong></div><div class="guide-line"><span>6,000–8,999</span><strong>3 pts</strong></div><div class="guide-line"><span>9,000+</span><strong>4 pts</strong></div></div><div class="guide-box"><h4>Grade</h4><div class="guide-line"><span>0–3</span><strong>Excellent</strong></div><div class="guide-line"><span>4–6</span><strong>Good</strong></div><div class="guide-line"><span>7–9</span><strong>Watch</strong></div><div class="guide-line"><span>10+</span><strong>Replace Soon</strong></div></div></div><div class="guide-note"><strong>PM treatment:</strong> PM expenses remain part of total forklift expense, but are excluded from Repair Cost YTD for grading. PM visits never count as service calls. PM compliance is tracked separately and does not change the grade.</div></div><div class="modal-foot"><button class="btn primary" onclick="closeScoringGuide()">Close</button></div></div></div>
+
+<div class="modal-backdrop" id="why-grade-modal" onclick="if(event.target===this)closeWhyGrade()"><div class="modal" style="max-width:520px"><div class="modal-head"><div><div class="modal-title">Why This Grade?</div><div class="muted" id="why-grade-title" style="font-size:11px;margin-top:3px"></div></div><button class="modal-close" onclick="closeWhyGrade()">×</button></div><div class="modal-body" id="why-grade-body"></div><div class="modal-foot"><button class="btn primary" onclick="closeWhyGrade()">Close</button></div></div></div>
+
+<div class="modal-backdrop" id="transaction-edit-modal" onclick="if(event.target===this)closeTransactionModal()"><div class="modal" style="max-width:760px"><div class="modal-head"><div><div class="modal-title">Edit Transaction</div><div class="muted" style="font-size:10px;margin-top:3px">Changes save directly to Forklift Transactions in SharePoint and recalculate totals/grades.</div></div><button class="modal-close" onclick="closeTransactionModal()">×</button></div><div class="modal-body"><div class="form-grid"><div class="form-group"><label class="form-label">Transaction Date</label><input class="form-input" type="date" id="txe-date"></div><div class="form-group"><label class="form-label">Forklift ID</label><input class="form-input" id="txe-forklift" placeholder="#47"></div><div class="form-group"><label class="form-label">Workroom</label><input class="form-input" id="txe-workroom"></div><div class="form-group"><label class="form-label">Vendor</label><input class="form-input" id="txe-vendor"></div><div class="form-group"><label class="form-label">Invoice Number</label><input class="form-input" id="txe-invoice"></div><div class="form-group"><label class="form-label">Amount</label><input class="form-input" type="number" step="0.01" id="txe-amount"></div><div class="form-group"><label class="form-label">Category</label><select class="form-input" id="txe-category"><option>Repair / Expense</option><option>PM Service</option><option>Expense</option><option>Repair</option><option>Other</option></select></div><div class="form-group"><label class="form-label">Service Call</label><label style="font-size:12px;padding-top:7px"><input type="checkbox" id="txe-service"> Counts as service call</label></div><div class="form-group"><label class="form-label">Hour Meter</label><input class="form-input" type="number" id="txe-hours"></div><div class="form-group"><label class="form-label">Downtime Days</label><input class="form-input" type="number" step="0.1" id="txe-downtime"></div><div class="form-group"><label class="form-label">Rental Required</label><label style="font-size:12px;padding-top:7px"><input type="checkbox" id="txe-rental"> Yes</label></div><div class="form-group"><label class="form-label">Invoice URL</label><input class="form-input" id="txe-url"></div><div class="form-group full"><label class="form-label">Description</label><textarea class="form-input" id="txe-description"></textarea></div><div class="form-group full"><label class="form-label">Notes</label><textarea class="form-input" id="txe-notes"></textarea></div></div></div><div class="modal-foot"><button class="btn" onclick="closeTransactionModal()">Cancel</button><button class="btn primary" id="txe-save" onclick="saveTransactionEdit()">Save Transaction</button></div></div></div>
 
 <div class="modal-backdrop import-modal" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="modal">
