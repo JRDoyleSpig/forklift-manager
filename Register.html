@@ -330,7 +330,8 @@ tr.fleet-row:hover td{background:var(--accent-light)}
           </div></details>
 
           <details class="help-topic"><summary>Fleet — adding and editing forklifts</summary><div class="help-body">
-            <p>The Fleet list represents the forklift’s <b>current state</b>: ID, make/model/serial, current workroom, status, current hours, primary service vendor, PM frequency, attachments/poles, acquisition information, and notes.</p>
+            <p>The Fleet list represents the forklift’s <b>current state</b>: ID, make/model/serial, current workroom, status, current hours, primary service vendor, PM frequency, attachments/poles, acquisition information, estimated replacement cost, and notes.</p>
+            <p><b>Estimated Replacement Cost</b> is entered manually for each forklift and is used only for lifetime-spend context/flagging. It does not directly add grade points.</p>
             <p>Double-click a forklift to edit it. Current workrooms are validated against active Lease Manager locations for Active, Down for Repair, and Parked units. Retired/Scrapped/Sold units may remain associated with an inactive historical location.</p>
             <p>Changing Current Hours automatically creates a reading in Forklift Hour Readings. If the new reading is lower than the current reading, the app warns you and requires confirmation.</p>
           </div></details>
@@ -349,6 +350,7 @@ tr.fleet-row:hover td{background:var(--accent-light)}
             <p>Transactions contains the expense lines used for financial reporting and grading. Negative transactions/credits reduce totals. The app calculates yearly expense and lifetime expense live from the transaction history rather than storing fixed totals on the forklift.</p>
             <p>Typical categories include PM Service, Repair / Expense, Rental, and other expense classifications. PM expense counts toward total operating expense but is excluded from Repair Expense YTD used in the Aging / Grading repair score. Rental expense also counts toward total expense but is currently kept separate from grading repair cost.</p>
             <p>Double-click a transaction to correct fields such as forklift, workroom, vendor, invoice, amount, category, service-call flag, hours, downtime, rental required, description, URL, or notes.</p>
+            <p><b>Major Life-Extending Repair:</b> for a repair that materially restores a major component and is expected to extend useful life, double-click the repair transaction and manually check Major Life-Extending Repair. Major Repair Notes are required. The designation reduces only the grading contribution; it does not reduce the actual financial spend shown in history.</p>
           </div></details>
 
           <details class="help-topic"><summary>NetSuite CSV import</summary><div class="help-body">
@@ -375,6 +377,7 @@ tr.fleet-row:hover td{background:var(--accent-light)}
             <p><b>3. Availability and Fleet Status are separate from rental.</b> A lift may be Usable, Limited Use, or Down / Unusable while the repair is open. Down / Unusable suggests Fleet Status = Down for Repair, but it does not automatically require a rental. A rental can be added later if downtime becomes long enough to justify one.</p><p><b>4. Add every useful technician visit/work order to that case.</b> An update can store the vendor, work-order/invoice reference, hours, downtime, attachments, notes, rental information, and an optional Fleet status change. Hours update Current Hours and Hour Readings only after confirmation.</p>
             <p><b>5. Costs normally come later.</b> You usually leave repair expense blank and allow the monthly NetSuite import to create the Transactions. If you already have a final invoice and enter expense lines during the update, they become Transactions immediately and duplicate safety should skip them during the later CSV import.</p>
             <p><b>6. Close the case only for a final outcome.</b> Repaired / Resolved, Parked, Retired / Disposed, or Cancelled / No Longer Needed remove the case from the Open Repair Cases queue. Replacement Recommended stays open until a final decision is made.</p>
+            <p><b>Attachments:</b> photos, quotes, work orders, and invoices saved with a Repair Case update appear in Case History. Click an attachment filename to open the SharePoint file and confirm what was saved with that update.</p>
           </div></details>
 
           <details class="help-topic"><summary>PM / Work Order / Invoice upload</summary><div class="help-body">
@@ -409,17 +412,22 @@ tr.fleet-row:hover td{background:var(--accent-light)}
           </div></details>
 
           <details class="help-topic"><summary>Aging / Grading</summary><div class="help-body">
-            <p>The grade combines current-year Repair Cost, Service Calls, and Total Hours. PM expense is excluded from Repair Cost for grading, and PMs never count as service calls.</p>
-            <p><b>Repair Cost points:</b> $0 = 0; $1–999 = 1; $1,000–1,999 = 2; $2,000–4,999 = 3; $5,000+ = 4.</p>
-            <p><b>Service Call points:</b> 0 = 0; 1–2 = 1; 3–4 = 2; 5–6 = 3; more than 6 = 4.</p>
-            <p><b>Hours points:</b> under 2,500 = 1; 2,500–5,999 = 2; 6,000–8,999 = 3; 9,000+ = 4.</p>
-            <p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–9 Watch; 10+ Replace Soon. Click the grade badge to see exactly why a unit received its score.</p>
-            <p>The formula is intentionally being kept stable while real fleet results are observed. A Watch or Replace Soon grade is a management signal, not an automatic replacement order.</p>
+            <p>The grade combines <b>weighted recent Repair Cost</b>, <b>weighted Service Calls</b>, and <b>Total Hours</b>. PM expense and rental expense are excluded from repair-cost grading. PMs and rental-only transactions never count as service calls.</p>
+            <p><b>Repair history weighting:</b> current year = 100%; prior year = 50%; two years prior = 25%. Older repair history remains visible in annual and lifetime reporting but does not add repair points.</p>
+            <p><b>Major Life-Extending Repairs:</b> these are manually identified on a repair transaction when the work materially restores a major component and is expected to extend useful life. Major Repair Notes are required. The full actual cost remains in annual and lifetime spend, but only 50% of the repair cost is used for grading before the year weighting is applied. The app never assigns this designation automatically based on dollar amount.</p>
+            <p><b>Weighted Repair Cost points:</b> $0 = 0; $1–$1,499 = 1; $1,500–$2,999 = 2; $3,000–$5,999 = 3; $6,000+ = 4.</p>
+            <p><b>Service-call history weighting:</b> current year = 100%; prior year = 75%; two years prior = 50%; three years prior = 10%. Older calls remain informational only.</p>
+            <p><b>Weighted Service Call points:</b> under 1.00 = 0; 1.00–2.99 = 1; 3.00–4.99 = 2; 5.00–6.99 = 3; 7.00+ = 4.</p>
+            <p><b>Hours points:</b> under 2,500 = 0; 2,500–5,999 = 1; 6,000–8,999 = 2; 9,000–11,999 = 3; 12,000+ = 4.</p>
+            <p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–8 Watch; 9+ Replace Soon. Click the grade badge to see the score breakdown. Replace Soon is a management signal, not an automatic replacement order.</p>
+            <p><b>Lifetime Repair Spend does not add grade points.</b> It is management context. When Estimated Replacement Cost is entered for the forklift, lifetime repair spend is compared with it: under 50% = no flag; 50–99% = Elevated Lifetime Spend; 100%+ = High Lifetime Spend.</p>
+            <p>The Aging / Grading screen deliberately shows both <b>Current-Year Actual Repair Spend</b> and the <b>Weighted Repair Amount used for grading</b> so the real financial history is never confused with the scoring calculation.</p>
           </div></details>
 
           <details class="help-topic"><summary>Reports</summary><div class="help-body">
-            <p>Aging / Grading can export both Excel and a Leadership PDF. If a ROM filter is selected, the report respects that filter; otherwise it reports the full fleet.</p>
-            <p>Excel is intended for filtering, auditing, and follow-up. The Leadership PDF is intended as a concise management summary of grades, repair cost, PM compliance, and attention items.</p>
+            <p>Aging / Grading can export both Excel and a Leadership PDF. If a ROM filter is selected, the report respects that filter; otherwise it reports the full grading fleet.</p>
+            <p><b>Excel</b> is the detailed audit report. It includes current-year actual repair spend, weighted repair amount, weighted service calls, lifetime repair spend, estimated replacement cost and lifetime-spend flag, Major Life-Extending Repair totals, point components, grade, and annual history by year including each year's weighted contribution.</p>
+            <p><b>Leadership PDF</b> is the concise management view. It highlights Watch / Replace Soon units and shows the actual-versus-weighted repair context, weighted calls, lifetime repair spend, life-extending repair indicator, replacement-cost context, score, and grade.</p>
           </div></details>
 
           <details class="help-topic"><summary>Lease Manager integration and workrooms</summary><div class="help-body">
@@ -1628,7 +1636,7 @@ function openServiceAttachment(spId,index){const a=(serviceAttachmentMap[Number(
 renderRepairCaseHistory=function(c){const rows=[c.base,...c.updates].sort((a,b)=>String(b.serviceDate||'').localeCompare(String(a.serviceDate||''))||b.spId-a.spId);document.getElementById('ru-history-table').innerHTML='<thead><tr><th>Date</th><th>Status</th><th>Vendor</th><th>Reference</th><th>Hours</th><th>Attachments</th><th>Update</th></tr></thead><tbody>'+rows.map(e=>{const files=serviceAttachmentMap[e.spId]||[];const links=files.length?files.map((a,i)=>`<button class="copy-btn" type="button" title="${esc(a.name)}" onclick="openServiceAttachment(${e.spId},${i});event.stopPropagation()">${esc(a.name)}</button>`).join(' '):'<span class="muted">—</span>';return `<tr><td>${fmtDate(e.serviceDate)}</td><td>${esc(repairCaseStatusFromEvent(e)||'—')}</td><td>${esc(e.vendor||'—')}</td><td>${esc(e.reference||'—')}</td><td class="mono">${e.hours==null?'—':fmtNum(e.hours)}</td><td style="white-space:normal;max-width:230px">${links}</td><td style="white-space:normal">${esc(e.description||'—')}</td></tr>`;}).join('')+'</tbody>';};
 
 // Update Help & Training in place.
-(function agUpdateHelp(){const topics=[...document.querySelectorAll('#help-topics .help-topic')];const aging=topics.find(d=>d.querySelector('summary')?.textContent.trim()==='Aging / Grading');if(aging){aging.querySelector('.help-body').innerHTML=`<p>The grade combines <b>weighted recent Repair Cost</b>, <b>weighted Service Calls</b>, and <b>Total Hours</b>. PM expense and rental expense are excluded from repair-cost grading; PMs and rental-only lines never count as service calls.</p><p><b>Repair history weighting:</b> current year 100%, prior year 50%, two years prior 25%; older years remain visible but do not add repair points. <b>Major Life-Extending Repairs</b> are manually marked on a Transaction, require Major Repair Notes, and count at 50% of actual cost before year weighting. Full actual cost always remains in annual and lifetime financial history.</p><p><b>Repair Cost points:</b> $0 = 0; $1–$1,499 = 1; $1,500–$2,999 = 2; $3,000–$5,999 = 3; $6,000+ = 4.</p><p><b>Service-call weighting:</b> current year 100%, prior year 75%, two years prior 50%, three years prior 10%; older calls are informational only. <b>Weighted Service Call points:</b> &lt;1 = 0; 1–&lt;3 = 1; 3–&lt;5 = 2; 5–&lt;7 = 3; 7+ = 4.</p><p><b>Hours points:</b> under 2,500 = 0; 2,500–5,999 = 1; 6,000–8,999 = 2; 9,000–11,999 = 3; 12,000+ = 4.</p><p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–8 Watch; 9+ Replace Soon. Replace Soon is a management signal, not an automatic replacement order.</p><p><b>Lifetime repair spend does not add grade points.</b> It is compared with the manual Estimated Replacement Cost: under 50% has no flag, 50–99% is Elevated Lifetime Spend, and 100%+ is High Lifetime Spend.</p>`;}const tx=topics.find(d=>d.querySelector('summary')?.textContent.includes('Transactions — financial'));if(tx){tx.querySelector('.help-body').insertAdjacentHTML('beforeend','<p><b>Major Life-Extending Repair:</b> double-click a repair transaction and manually check Major Life-Extending Repair when the work materially restores a major component and is expected to extend useful life. Major Repair Notes are required. This is never assigned automatically from dollar amount.</p>');}const rc=topics.find(d=>d.querySelector('summary')?.textContent.includes('Repair Cases —'));if(rc){rc.querySelector('.help-body').insertAdjacentHTML('beforeend','<p><b>Attachments:</b> photos, quotes, work orders, and invoices saved to a Repair Case or Repair Update appear in the Case History attachment column. Click the filename to open the SharePoint attachment.</p>');}})();
+
 </script>
 
 </body>
