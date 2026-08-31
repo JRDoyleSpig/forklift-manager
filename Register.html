@@ -1866,6 +1866,105 @@ Late transactions can still update actuals and will trigger Changed After Close.
 async function budgetReopenMonth(){const info=budgetCloseInfo(budgetSelectedMonth);if(!info.closed)return alert('This month is not closed.');const reason=prompt('Reason for reopening this month (required):','');if(!String(reason||'').trim())return alert('A reopen reason is required.');if(!confirm(`Reopen ${budgetMonthLabel(budgetSelectedMonth)}?`))return;try{const token=await getToken(),et=await listEntityType(token,BUDGET_HISTORY_LIST_API);for(const h of info.recs){const body={__metadata:{type:et}};fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Is Current Forecast',false);const r=await fetch(BUDGET_HISTORY_LIST_API+`/items(${h.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error(await r.text());}await budgetWriteForecastHistory(token,{sourceType:'PM',sourceId:`REOPEN:${budgetSelectedMonth}:${Date.now()}`,account:BUDGET_ACCOUNT_6022,amount:0,ym:budgetSelectedMonth,confidence:'High',forecastType:'PM Forecast',autoManual:'Auto',snapshotMonth:budgetSelectedMonth,overrideReason:reason,notes:`Month reopened: ${reason}`});await loadBudgetData(token);renderBudget();alert(`${budgetMonthLabel(budgetSelectedMonth)} reopened.`);}catch(e){console.error(e);alert('Could not reopen month: '+e.message);}}
 const _monthCloseRenderBudget=renderBudget;renderBudget=function(){_monthCloseRenderBudget();const x=budgetSummary(budgetSelectedMonth),info=budgetCloseInfo(budgetSelectedMonth),future=budgetIsFuture(budgetSelectedMonth),closeBtn=document.getElementById('budget-close-btn'),reopenBtn=document.getElementById('budget-reopen-btn');if(closeBtn){closeBtn.style.display=!future&&!info.closed?'':'none';closeBtn.textContent=budgetIsPrior(budgetSelectedMonth)?'Close Month':'Close Current Month';}if(reopenBtn)reopenBtn.style.display=info.closed?'':'none';const grid=document.getElementById('budget-summary-grid'),acct=document.getElementById('budget-account-grid');document.getElementById('budget-close-banner')?.remove();if(info.closed){const m22=info.by['6022']?.meta||{},m23=info.by['6023']?.meta||{},changed22=Math.abs(Number(x.a22)-Number(m22.actualAtClose||0))>.009,changed23=Math.abs(Number(x.a23)-Number(m23.actualAtClose||0))>.009,changed=changed22||changed23,incomplete=[m22.dataStatus==='Historical Data Incomplete'?'6022':'',m23.dataStatus==='Historical Data Incomplete'?'6023':''].filter(Boolean);const banner=document.createElement('div');banner.id='budget-close-banner';banner.className='month-close-banner '+(changed?'changed':incomplete.length?'incomplete':'closed');banner.innerHTML=`<b>${budgetMonthLabel(budgetSelectedMonth)} — CLOSED</b>${changed?' · <b>Changed After Close</b>':''}<br>6022: ${esc(m22.dataStatus||'Complete')} · 6023: ${esc(m23.dataStatus||'Complete')}${incomplete.length?`<br>Historical transaction data marked incomplete: ${incomplete.join(', ')}`:''}${m22.closeNote?`<br>Close note: ${esc(m22.closeNote)}`:''}`;grid.parentNode.insertBefore(banner,grid);const v22=x.b22.amount-x.a22,v23=x.b23.amount-x.a23,p22=Number(m22.projectedAtClose??x.a22),p23=Number(m23.projectedAtClose??x.a23);grid.innerHTML=`<div class="stat-card"><div class="stat-label">6022 Budget</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.b22.amount)}</div></div><div class="stat-card accent"><div class="stat-label">6022 Actual</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.a22)}</div><div class="stat-sub">Final forecast at close ${fmtMoney(p22)}</div></div><div class="stat-card ${v22<0?'danger':'good'}"><div class="stat-label">6022 Variance</div><div class="stat-value" style="font-size:20px">${fmtMoney(v22)}</div><div class="stat-sub">${v22>=0?'Under':'Over'} budget · ${budgetForecastDeltaText(p22,x.a22)}</div></div><div class="stat-card"><div class="stat-label">6023 Budget</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.b23.amount)}</div></div><div class="stat-card accent"><div class="stat-label">6023 Actual</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.a23)}</div><div class="stat-sub">Final forecast at close ${fmtMoney(p23)}</div></div><div class="stat-card ${v23<0?'danger':'good'}"><div class="stat-label">6023 Variance</div><div class="stat-value" style="font-size:20px">${fmtMoney(v23)}</div><div class="stat-sub">${v23>=0?'Under':'Over'} budget · ${budgetForecastDeltaText(p23,x.a23)}</div></div>`;acct.innerHTML=`<div class="budget-account"><h3>6022 — Repair & Maintenance · Closed</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(x.b22.amount)}</strong></div><div class="budget-line"><span>Final Actual</span><strong>${fmtMoney(x.a22)}</strong></div><div class="budget-line"><span>Budget Variance</span><strong>${fmtMoney(v22)}</strong></div><div class="budget-line"><span>Final Forecast at Close</span><strong>${fmtMoney(p22)}</strong></div><div class="budget-line"><span>Forecast vs Actual</span><strong>${budgetForecastDeltaText(p22,x.a22)}</strong></div><div class="budget-line"><span>Data Status</span><strong>${esc(m22.dataStatus||'Complete')}</strong></div>${changed22?`<div class="budget-line"><span>Changed After Close</span><strong style="color:var(--warn)">${fmtMoney(x.a22-Number(m22.actualAtClose||0))}</strong></div>`:''}</div><div class="budget-account"><h3>6023 — Forklift Rental · Closed</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(x.b23.amount)}</strong></div><div class="budget-line"><span>Final Actual</span><strong>${fmtMoney(x.a23)}</strong></div><div class="budget-line"><span>Budget Variance</span><strong>${fmtMoney(v23)}</strong></div><div class="budget-line"><span>Final Forecast at Close</span><strong>${fmtMoney(p23)}</strong></div><div class="budget-line"><span>Forecast vs Actual</span><strong>${budgetForecastDeltaText(p23,x.a23)}</strong></div><div class="budget-line"><span>Data Status</span><strong>${esc(m23.dataStatus||'Complete')}</strong></div>${changed23?`<div class="budget-line"><span>Changed After Close</span><strong style="color:var(--warn)">${fmtMoney(x.a23-Number(m23.actualAtClose||0))}</strong></div>`:''}</div>`;} };
 
+
+/* ── AUG 31 FOLLOW-UP: stronger document recommendations + legacy historical close ── */
+function workOrderDetectForklift(text,serial){
+  const clean=String(text||'');
+  if(serial){
+    const exact=fleet.find(f=>String(f.serial||'').trim().toUpperCase()===String(serial).trim().toUpperCase());
+    if(exact)return {forklift:exact,reason:'serial number',confidence:'High'};
+  }
+  const ids=[...clean.matchAll(/#\s*(\d{1,3})\b/g)].map(m=>'#'+m[1]);
+  for(const id of ids){const f=fleet.find(x=>x.id===id);if(f)return {forklift:f,reason:`forklift ID ${id}`,confidence:'Medium'};}
+  return {forklift:null,reason:'no reliable asset identifier found',confidence:'Low'};
+}
+function workOrderDetectVendor(text,extracted,matchedForklift){
+  if(String(extracted||'').trim())return {vendor:String(extracted).trim(),reason:'document text',confidence:'High'};
+  const low=String(text||'').toLowerCase();
+  const candidates=[...new Set(fleet.map(f=>String(f.serviceVendor||'').trim()).filter(v=>v.length>=4))];
+  const hits=candidates.filter(v=>low.includes(v.toLowerCase()));
+  if(hits.length===1)return {vendor:hits[0],reason:'vendor name found in document',confidence:'High'};
+  if(matchedForklift?.serviceVendor)return {vendor:matchedForklift.serviceVendor,reason:'forklift primary service vendor',confidence:'Medium'};
+  return {vendor:'',reason:'not found',confidence:'Low'};
+}
+function recommendationLine(label,value,confidence,reason){
+  const c=confidence==='High'?'var(--good)':confidence==='Medium'?'var(--warn)':'var(--muted)';
+  return `<div style="display:grid;grid-template-columns:155px 1fr 72px;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span class="muted">${esc(label)}</span><strong>${esc(value||'Not found')}</strong><span style="color:${c};font-weight:600">${esc(confidence)}</span></div>`;
+}
+analyzeWorkOrderFile=async function(file){
+  if(!file)return;
+  workOrderFile=file;
+  const preview=document.getElementById('wo-preview');
+  preview.innerHTML=`<strong>Analyzing document…</strong><br><span class="muted">Reading ${esc(file.name)} and preparing the app's recommendations.</span>`;
+  try{
+    workOrderText=file.name.toLowerCase().endsWith('.pdf')?await pdfText(file):await file.text();
+    const x=extractWorkOrder(workOrderText);
+    const matchInfo=workOrderDetectForklift(workOrderText,x.serial);
+    const match=matchInfo.forklift || fleet.find(f=>f.id===formVal('wo-forklift')) || null;
+    const vendorInfo=workOrderDetectVendor(workOrderText,x.vendor,match);
+
+    setFormVal('wo-serial',x.serial||match?.serial||'');
+    setFormVal('wo-hours',x.hours??'');
+    setFormVal('wo-reference',x.reference||'');
+    setFormVal('wo-amount',x.amount??'');
+    if(x.date)setFormVal('wo-date',x.date);
+    if(match)setFormVal('wo-forklift',match.id);
+    setFormVal('wo-vendor',vendorInfo.vendor||'');
+    document.getElementById('wo-is-pm').checked=!!x.isPM;
+    setFormVal('wo-transaction-type',x.isPM?'PM Service':(x.amount!=null&&x.isInvoice?'Repair / Expense':'Do Not Create Transaction'));
+    refreshWorkOrderMatch();
+
+    const acct=match?accountingWorkroomForForklift(match):'';
+    const recs=[];
+    recs.push(recommendationLine('Matched Forklift',match?`${match.id} · ${match.manufacturer||''} ${match.model||''}`.trim():'Not matched',matchInfo.confidence,matchInfo.reason));
+    recs.push(recommendationLine('Accounting Workroom',acct||'Not available',acct?'High':'Low',acct?'from this forklift’s transaction history':'no accounting workroom history found'));
+    recs.push(recommendationLine('Service / Document Date',x.date?fmtDate(x.date):fmtDate(formVal('wo-date')),x.date?'High':'Low',x.date?'read from document':'using current form date — review'));
+    recs.push(recommendationLine('Hour Meter',x.hours==null?'Not found':fmtNum(x.hours),x.hours==null?'Low':'High',x.hours==null?'no meter reading found':'read from document'));
+    recs.push(recommendationLine('Invoice / Work Order #',x.reference||'Not found',x.reference?'High':'Low',x.reference?'read from document':'not found'));
+    recs.push(recommendationLine('Vendor',vendorInfo.vendor||'Not found',vendorInfo.confidence,vendorInfo.reason));
+    recs.push(recommendationLine('Invoice Amount',x.amount==null?'Not found':fmtMoney(x.amount),x.amount==null?'Low':'High',x.amount==null?'not found':'read from document total'));
+    recs.push(recommendationLine('Document Type',x.isPM?'PM Service':(x.isInvoice?'Repair / Expense':'Service Document'),x.isPM||x.isInvoice?'High':'Medium',x.isPM?'PM language detected':x.isInvoice?'invoice language detected':'no PM/invoice signal'));
+    recs.push(recommendationLine('Transaction Type',formVal('wo-transaction-type'),'High',x.isPM?'PM automatically defaults to PM Service':x.amount!=null&&x.isInvoice?'invoice with amount defaults to Repair / Expense':'no financial transaction recommended'));
+    recs.push(recommendationLine('Service Call',formVal('wo-transaction-type')==='Repair / Expense'?'Yes':'No','High',x.isPM?'PMs never count as service calls':'based on recommended transaction type'));
+
+    preview.innerHTML=`<div style="font-weight:700;color:var(--good);margin-bottom:6px">Recommendations loaded — review the fields below, then Confirm & Save.</div>${recs.join('')}<div style="margin-top:8px"><span class="doc-status-ok">${esc(file.name)} selected — it will upload to Forklift Service Events and be verified after save.</span></div><div class="muted" style="margin-top:5px">These are recommendations, not locked values. You can correct any field before saving.</div>`;
+    refreshWorkOrderMatch();
+    refreshWorkOrderTransactionPreview();
+  }catch(e){
+    console.error(e);
+    preview.innerHTML=`<span style="color:var(--warn);font-weight:700">Automatic recommendations could not be completed.</span><br>${esc(e.message)}<br><span class="doc-status-ok">${esc(file.name)} is still selected and ready to upload.</span><br><span class="muted">Enter or correct the fields manually before saving.</span>`;
+    refreshWorkOrderTransactionPreview();
+  }
+};
+
+const _budgetCloseInfoStored=budgetCloseInfo;
+budgetCloseInfo=function(ym){
+  const stored=_budgetCloseInfoStored(ym);
+  if(stored.closed)return stored;
+  const current=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+  if(String(ym)<current){
+    return {closed:true,historical:true,recs:[],by:{
+      '6022':{record:null,meta:{version:1,ym,code:'6022',historicalLegacy:true,dataStatus:'Complete',closeNote:'Historical month — automatically treated as closed; no formal close snapshot existed.'}},
+      '6023':{record:null,meta:{version:1,ym,code:'6023',historicalLegacy:true,dataStatus:'Historical Data Incomplete',closeNote:'Historical month — rental transactions were not consistently entered before the new monthly workflow.'}}
+    }};
+  }
+  return stored;
+};
+const _legacyHistoricalRenderBudget=renderBudget;
+renderBudget=function(){
+  _legacyHistoricalRenderBudget();
+  const info=budgetCloseInfo(budgetSelectedMonth);
+  if(!info.historical)return;
+  const x=budgetSummary(budgetSelectedMonth),grid=document.getElementById('budget-summary-grid'),acct=document.getElementById('budget-account-grid');
+  const reopen=document.getElementById('budget-reopen-btn'),close=document.getElementById('budget-close-btn');
+  if(reopen)reopen.style.display='none';if(close)close.style.display='none';
+  const old=document.getElementById('budget-close-banner');
+  if(old){old.className='month-close-banner incomplete';old.innerHTML=`<b>${budgetMonthLabel(budgetSelectedMonth)} — HISTORICAL CLOSED</b><br>Legacy month automatically treated as closed. No manual close is required and no formal forecast-at-close snapshot is fabricated.<br>6022: Complete · 6023: Historical Data Incomplete`}
+  const v22=x.b22.amount-x.a22,v23=x.b23.amount-x.a23;
+  if(grid)grid.innerHTML=`<div class="stat-card"><div class="stat-label">6022 Budget</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.b22.amount)}</div></div><div class="stat-card accent"><div class="stat-label">6022 Actual</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.a22)}</div><div class="stat-sub">Historical transaction actual</div></div><div class="stat-card ${v22<0?'danger':'good'}"><div class="stat-label">6022 Variance</div><div class="stat-value" style="font-size:20px">${fmtMoney(v22)}</div><div class="stat-sub">${v22>=0?'Under':'Over'} budget</div></div><div class="stat-card"><div class="stat-label">6023 Budget</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.b23.amount)}</div></div><div class="stat-card accent"><div class="stat-label">6023 Actual</div><div class="stat-value" style="font-size:20px">${fmtMoney(x.a23)}</div><div class="stat-sub">Historical data may be incomplete</div></div><div class="stat-card ${v23<0?'danger':'good'}"><div class="stat-label">6023 Variance</div><div class="stat-value" style="font-size:20px">${fmtMoney(v23)}</div><div class="stat-sub">${v23>=0?'Under':'Over'} budget · historical data incomplete</div></div>`;
+  if(acct)acct.innerHTML=`<div class="budget-account"><h3>6022 — Repair & Maintenance · Historical Closed</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(x.b22.amount)}</strong></div><div class="budget-line"><span>Actual</span><strong>${fmtMoney(x.a22)}</strong></div><div class="budget-line"><span>Budget Variance</span><strong>${fmtMoney(v22)}</strong></div><div class="budget-line"><span>Forecast at Close</span><strong>Not available</strong></div><div class="budget-line"><span>Data Status</span><strong>Complete</strong></div></div><div class="budget-account"><h3>6023 — Forklift Rental · Historical Closed</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(x.b23.amount)}</strong></div><div class="budget-line"><span>Actual in Forklift Transactions</span><strong>${fmtMoney(x.a23)}</strong></div><div class="budget-line"><span>Budget Variance</span><strong>${fmtMoney(v23)}</strong></div><div class="budget-line"><span>Forecast at Close</span><strong>Not available</strong></div><div class="budget-line"><span>Data Status</span><strong>Historical Data Incomplete</strong></div></div>`;
+};
+
 /* Help text for the two workflow improvements. */
 window.addEventListener('load',()=>{const topics=document.getElementById('help-topics');if(topics&&!document.getElementById('help-aug31-improvements'))topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-aug31-improvements"><summary>PM upload — smart transaction review and verified documents</summary><div class="help-body"><p>The PM / Work Order / Invoice upload now auto-fills the matched forklift, accounting-style Workroom from transaction history when available, and Primary Service Vendor. PM documents default to <b>PM Service</b>, but Transaction Type remains editable: PM Service, Repair / Expense, Rental, Other, or Do Not Create Transaction.</p><p>The confirmation screen shows the exact transaction classification before saving. PM Service always uses Service Call = No. Repair / Expense uses Service Call = Yes for this service event. The document is uploaded to the Service Event and then read back from SharePoint to verify it exists. The app retries failed attachment uploads automatically. If the Service Event saves but the document still fails, use <b>Recent Service Events / Documents → Retry / Add Document</b>; do not recreate the PM.</p></div></details><details class="help-topic"><summary>Forklift Budget — closing and reopening a month</summary><div class="help-body"><p>Use <b>Close Month</b> after the monthly NetSuite transaction import has been completed/reviewed. Closing snapshots the actual and final projected amount for 6022 and 6023 separately. You can mark either account Complete or Historical Data Incomplete and add an optional close note.</p><p>A closed month shows Budget, Final Actual, Budget Variance, Final Forecast at Close, and Forecast vs Actual instead of a live Projected amount. Late transactions are still allowed; if actuals change after close, the month is clearly flagged <b>Changed After Close</b>. Reopen Month is available when a correction is needed and requires a reason.</p></div></details>`);});
 </script>
