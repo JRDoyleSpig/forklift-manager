@@ -2089,6 +2089,114 @@ saveWorkOrderHours=async function(){
 
 /* Help text for the two workflow improvements. */
 window.addEventListener('load',()=>{const topics=document.getElementById('help-topics');if(topics&&!document.getElementById('help-aug31-improvements'))topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-aug31-improvements"><summary>PM upload — smart transaction review and verified documents</summary><div class="help-body"><p>The PM / Work Order / Invoice upload now auto-fills the matched forklift, accounting-style Workroom from transaction history when available, and Primary Service Vendor. PM documents default to <b>PM Service</b>, but Transaction Type remains editable: PM Service, Repair / Expense, Rental, Other, or Do Not Create Transaction.</p><p>The confirmation screen shows the exact transaction classification before saving. PM Service always uses Service Call = No. Repair / Expense uses Service Call = Yes for this service event. The document is uploaded to the Service Event using the same SharePoint attachment method used by the proven repair-document workflow, then read back from SharePoint to verify it exists. The app retries failed attachment uploads automatically. If the Service Event saves but the document still fails, use <b>Recent Service Events / Documents → Retry / Add Document</b>; do not recreate the PM.</p></div></details><details class="help-topic"><summary>Forklift Budget — closing and reopening a month</summary><div class="help-body"><p>Use <b>Close Month</b> after the monthly NetSuite transaction import has been completed/reviewed. Closing snapshots the actual and final projected amount for 6022 and 6023 separately. You can mark either account Complete or Historical Data Incomplete and add an optional close note.</p><p>A closed month shows Budget, Final Actual, Budget Variance, Final Forecast at Close, and Forecast vs Actual instead of a live Projected amount. Late transactions are still allowed; if actuals change after close, the month is clearly flagged <b>Changed After Close</b>. Reopen Month is available when a correction is needed and requires a reason.</p></div></details>`);});
+
+
+/* ── AUG 31 PM VISIT LINKING: one PM event, multiple documents ── */
+function isoDayDistance(a,b){
+  if(!a||!b)return 9999;
+  const x=new Date(String(a).slice(0,10)+'T00:00:00'),y=new Date(String(b).slice(0,10)+'T00:00:00');
+  return Math.abs(Math.round((x-y)/86400000));
+}
+function pmVisitCandidateScore(e,{fid,date,ref,vendor,hours}){
+  if(String(e.forkliftId||'')!==String(fid||''))return -999;
+  if(!String(e.serviceType||'').toLowerCase().includes('pm'))return -999;
+  const days=isoDayDistance(e.serviceDate,date);if(days>7)return -999;
+  let score=0,reasons=[];
+  const er=String(e.reference||'').trim().toUpperCase(),rr=String(ref||'').trim().toUpperCase();
+  if(er&&rr&&er===rr){score+=10;reasons.push('same reference');}
+  if(days===0){score+=4;reasons.push('same service date');}
+  else if(days<=2){score+=3;reasons.push(`${days} day${days===1?'':'s'} apart`);}
+  else {score+=2;reasons.push(`${days} days apart`);}
+  if(e.vendor&&vendor&&vendorMatches(e.vendor,vendor)){score+=3;reasons.push('vendor matches');}
+  const eh=num(e.hours),hh=num(hours);if(eh!=null&&hh!=null){const diff=Math.abs(eh-hh);if(diff<=1){score+=4;reasons.push('same hour reading');}else if(diff<=10){score+=2;reasons.push('hours are close');}}
+  return {event:e,score,reasons,days};
+}
+function recommendedPMVisit(fid,date,ref,vendor,hours){
+  const ranked=serviceEvents.map(e=>pmVisitCandidateScore(e,{fid,date,ref,vendor,hours})).filter(x=>x&&x.score>=5).sort((a,b)=>b.score-a.score||a.days-b.days||Number(a.event.spId)-Number(b.event.spId));
+  return ranked[0]||null;
+}
+function appendUniqueNote(base,addition){const b=String(base||'').trim(),a=String(addition||'').trim();if(!a)return b;if(b.toLowerCase().includes(a.toLowerCase()))return b;return [b,a].filter(Boolean).join(' | ');}
+async function mergePMVisitDocument(token,existing,data,files=[]){
+  const et=await listEntityType(token,SERVICE_LIST_API),body={__metadata:{type:et}};
+  // Preserve the original PM visit's date/reference. The later invoice/work order is another document for the same visit.
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Forklift ID',existing.forkliftId||data.forkliftId);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Service Date',existing.serviceDate||data.date);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Service Type','PM');
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Vendor',data.vendor||existing.vendor);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Vendor Phone',data.vendorPhone||existing.vendorPhone||'');
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Workroom',existing.workroom||data.workroom);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Invoice / Work Order',existing.reference||data.reference);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Hours',data.hours!=null?data.hours:existing.hours);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Downtime Days',existing.downtime??data.downtime);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Rental Required',existing.rentalRequired||data.rentalRequired);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Description',existing.description||'PM service event');
+  const docRef=data.reference?`Additional PM document reference: ${data.reference}`:'Additional PM document uploaded';
+  const note=appendUniqueNote(appendUniqueNote(existing.notes,data.notes),docRef);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Notes',note);
+  fieldAssign(body,serviceFieldMap,serviceFieldMeta,'Status',existing.status||data.status||'');
+  const r=await fetch(SERVICE_LIST_API+`/items(${existing.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('PM Service Event update failed: '+await r.text());
+  const item={Id:existing.spId,attachmentResults:[],reused:true,linkedPMVisit:true,eventId:existing.eventId||data.eventId};
+  let attached=[];try{attached=await listServiceAttachments(token,existing.spId);}catch(e){console.warn('Could not pre-read existing attachments',e);}
+  for(const file of files){
+    const already=attached.some(x=>String(x.name||'').toLowerCase()===String(file.name||'').toLowerCase());
+    if(already){item.attachmentResults.push({name:file.name,ok:true,verified:true,already:true});continue;}
+    try{const res=await uploadAttachment(token,SERVICE_LIST_API,existing.spId,file);item.attachmentResults.push({name:file.name,ok:true,verified:!!res.verified});}
+    catch(e){console.error('Attachment failed',file.name,e);item.attachmentResults.push({name:file.name,ok:false,error:e.message});}
+  }
+  return item;
+}
+
+saveWorkOrderHours=async function(){
+  const fid=formVal('wo-forklift'),f=fleet.find(x=>x.id===fid),hours=numOrNull(formVal('wo-hours')),date=formVal('wo-date'),serial=formVal('wo-serial').trim(),ref=formVal('wo-reference').trim(),vendor=formVal('wo-vendor').trim(),amount=numOrNull(formVal('wo-amount')),isPM=document.getElementById('wo-is-pm').checked,txType=formVal('wo-transaction-type')||'Do Not Create Transaction',acctWorkroom=formVal('wo-workroom').trim()||accountingWorkroomForForklift(f);
+  if(!f)return alert('Select the forklift.');
+  if(!date)return alert('Service / Document Date is required.');
+  if(serial&&f.serial&&serial.toUpperCase()!==String(f.serial).toUpperCase()&&!confirm(`Detected serial ${serial} does not match ${f.id} serial ${f.serial}. Continue anyway?`))return;
+  if(isPM&&txType!=='PM Service'&&!confirm(`PM Document is checked but Transaction Type is ${txType}. Continue with that classification?`))return;
+  if(amount!=null&&txType!=='Do Not Create Transaction'&&!ref&&!confirm('No invoice/work-order number is entered. Creating a transaction without a reference makes later duplicate matching less reliable. Create it anyway?'))return;
+  const createTx=amount!=null&&txType!=='Do Not Create Transaction',serviceCall=createTx&&txType==='Repair / Expense';
+  const exactMatches=matchingServiceEventsForDocument(f.id,date,ref,isPM);
+  const pmRecommendation=isPM&&!exactMatches.length?recommendedPMVisit(f.id,date,ref,vendor,hours):null;
+  const reusedEvent=exactMatches[0]||pmRecommendation?.event||null;
+  const existingTx=createTx&&ref?findMatchingTransaction(f.id,ref,amount):null;
+  const parts=[`Save document for ${f.id} · ${f.workroom}?`,`Accounting Workroom: ${acctWorkroom||'None'}`,`Document date: ${fmtDate(date)}`,`Service Type: ${isPM?'PM':'Service / Hours'}`,`Hours: ${hours==null?'No reading':fmtNum(hours)}`,`Document Reference: ${ref||'None'}`,`Invoice Amount: ${amount==null?'None':fmtMoney(amount)}`,`Transaction: ${createTx?txType+' · Service Call '+(serviceCall?'Yes':'No'):'None'}`,`Document: ${workOrderFile?workOrderFile.name+' · will upload and verify':'No file selected'}`];
+  if(exactMatches.length)parts.push('Existing Service Event found: it will be updated/reused instead of creating another event.');
+  else if(pmRecommendation){parts.push(`Existing PM visit recommended: ${pmRecommendation.event.eventId} · ${fmtDate(pmRecommendation.event.serviceDate)} · ${pmRecommendation.event.reference||'no reference'} (${pmRecommendation.reasons.join(', ')}). This document will be attached to that PM visit instead of creating a second PM event.`);parts.push('If this is actually a different PM visit, click Cancel and correct the date/vendor/hours before saving.');}
+  if(existingTx)parts.push(`Existing matching transaction found: it will be updated to ${txType} instead of creating a duplicate.`);
+  if(!confirm(parts.join('\n')))return;
+  const btn=document.getElementById('wo-save');btn.disabled=true;btn.textContent='Saving…';let eventItem=null;
+  try{
+    const token=await getToken();
+    // Avoid a duplicate hour-reading record when an invoice is merely being added to an existing PM visit.
+    const hourAlready=reusedEvent&&hours!=null&&num(reusedEvent.hours)!=null&&Math.abs(Number(reusedEvent.hours)-Number(hours))<=1;
+    if(hours!=null&&!hourAlready){await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:isPM?'PM':'Work Order',workroom:f.workroom,reference:ref,notes:[vendor?`Vendor: ${vendor}`:'',serial?`Serial: ${serial}`:'',formVal('wo-notes')].filter(Boolean).join(' | ')});}
+    else if(hours!=null){await updateFleetHours(token,f,hours,reusedEvent?.serviceDate||date);}
+    const generatedEventId=(isPM?'PM':'WO')+'-'+f.id.replace('#','')+'-'+date.replaceAll('-','')+'-'+String(ref||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-24);
+    const serviceEventId=reusedEvent?.eventId||generatedEventId;
+    const eventData={eventId:serviceEventId,forkliftId:f.id,date,type:isPM?'PM':'Work Order / Hours',vendor,vendorPhone:'',workroom:f.workroom,reference:ref,hours,downtime:null,rentalRequired:txType==='Rental',description:isPM?'PM service document':'Work order / invoice document',notes:[formVal('wo-notes'),`Accounting Workroom: ${acctWorkroom}`,`Transaction Type: ${txType}`].filter(Boolean).join(' | '),status:''};
+    if(isPM&&reusedEvent)eventItem=await mergePMVisitDocument(token,reusedEvent,eventData,workOrderFile?[workOrderFile]:[]);
+    else eventItem=await upsertServiceEventForDocument(token,eventData,workOrderFile?[workOrderFile]:[]);
+    if(isPM)await updateLastPMFromUpload(token,f,reusedEvent?.serviceDate||date);
+    let txCreated=false,txUpdated=false;
+    if(createTx){
+      const match=ref?findMatchingTransaction(f.id,ref,amount):null;
+      if(match){await updateMatchingTransactionFromServiceDocument(token,match,{workroom:acctWorkroom,vendor,category:txType,serviceCall,hours,serviceEventId});txUpdated=true;}
+      else{const txetype=await listEntityType(token,TX_LIST_API),prefix=txType==='PM Service'?'PMUP':txType==='Rental'?'RNTUP':'SVCUP',txid=`${prefix}-${f.id.replace('#','')}-${date.replaceAll('-','')}-${String(ref||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-18)}`;await createTransactionLine(token,txetype,{id:txid,forkliftId:f.id,date,workroom:acctWorkroom,reference:ref,amount,vendor,category:txType,serviceCall,hours,downtime:null,rentalRequired:txType==='Rental',description:`${txType} document uploaded through Service / Hours`,notes:`Service Event ID: ${serviceEventId} | Uploaded service document`,serviceEventId,rentalId:''});txCreated=true;}
+    }
+    closeWorkOrderModal();tokenCache=null;await loadData(true);
+    const failed=(eventItem?.attachmentResults||[]).filter(x=>!x.ok),ok=(eventItem?.attachmentResults||[]).filter(x=>x.ok);
+    let msg=`${isPM?'PM':'Service document'} saved successfully.`;
+    if(eventItem?.linkedPMVisit)msg+=' Document linked to the existing PM visit; no second PM Service Event was created.';else if(eventItem?.reused)msg+=' Existing Service Event reused/updated; no duplicate Service Event was created.';
+    if(hours!=null)msg+=` Hours confirmed at ${fmtNum(hours)}.`;
+    if(txCreated)msg+=` ${txType} transaction created using ${acctWorkroom}.`;
+    if(txUpdated)msg+=` Matching transaction updated to ${txType} using ${acctWorkroom}; no duplicate transaction was created.`;
+    if(ok.length)msg+=` Document uploaded and verified: ${ok.map(x=>x.name+(x.already?' (already attached)':'')).join(', ')}.`;
+    if(failed.length)msg+=`\n\nWARNING: PM/service event was saved, but document upload failed after retries: ${failed.map(x=>x.name).join(', ')}. Use Service / Hours → Recent Service Events / Documents → Retry / Add Document.`;
+    alert(msg);
+  }catch(e){console.error(e);alert('Could not save service document: '+e.message);}finally{btn.disabled=false;btn.textContent='Confirm & Save';}
+};
+
+window.addEventListener('load',()=>{const t=document.querySelector('#help-aug31-improvements .help-body');if(t)t.insertAdjacentHTML('beforeend','<p><b>One PM visit can have multiple documents.</b> If a later PM invoice/work order matches an existing PM for the same forklift within 7 days using date, vendor, reference, and/or hour reading, the app recommends the existing PM and attaches the new document to that same Service Event. The original PM visit date/reference are preserved; the invoice can still create or update the financial Transaction using its own invoice number and amount.</p>');});
 </script>
 </body>
 </html>
