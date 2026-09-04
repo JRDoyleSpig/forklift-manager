@@ -1677,7 +1677,29 @@ function budgetPercentile(vals,p){const a=vals.filter(Number.isFinite).sort((x,y
 function budgetRepairEventCosts(){const pm=pmGroupSet(),g={};transactions.forEach(t=>{if(!t.forkliftId||!t.transactionDate||isPM(t,pm)||isRentalTx(t)||!t.serviceCall)return;g[txGroupKey(t)]=0;});transactions.forEach(t=>{const k=txGroupKey(t);if(k in g)g[k]+=Number(t.amount||0);});return Object.values(g).filter(v=>v>0);}function budgetBaseRepairReserve(){return budgetPercentile(budgetRepairEventCosts(),.75)||923.80;}
 function budgetInferIssue(text){const s=String(text||'').toLowerCase();if(/transmission|engine|motor|compression|head gasket/.test(s))return'Engine / Transmission';if(/mast|carriage|chain|lift cylinder|tilt cylinder/.test(s))return'Mast / Carriage';if(/hydraulic|hose|leak|cylinder/.test(s))return'Hydraulics';if(/brake/.test(s))return'Brakes';if(/tire|wheel|caster/.test(s))return'Tires / Wheels';if(/start|starter|battery|electrical|wiring|alternator|ignition|code /.test(s))return'Electrical / Starting';if(/steer/.test(s))return'Steering';if(/propane|fuel|lp |lpg/.test(s))return'Fuel / Propane';if(/pole|attachment|fork/.test(s))return'Attachment / Carpet Pole';return'Other / Unknown';}
 function budgetIssueMultiplier(i){return {'Electrical / Starting':.90,'Hydraulics':1,'Brakes':.85,'Tires / Wheels':.85,'Mast / Carriage':1.30,'Engine / Transmission':1.75,'Fuel / Propane':.85,'Steering':1.05,'Attachment / Carpet Pole':.85,'Other / Unknown':1}[i]||1;}function budgetStatusMultiplier(s){s=String(s||'').toLowerCase();if(s.includes('replacement recommended'))return 1.8;if(s.includes('waiting on parts'))return 1.35;if(s.includes('follow-up'))return 1.25;if(s.includes('waiting on quote')||s.includes('waiting on approval'))return 1.15;if(s.includes('diagnos'))return 1.05;return 1;}
-function budgetExpectedRepairYM(c){const l=c.latest||c.base,st=String(c.status||''),d=new Date((l.serviceDate||todayISO())+'T12:00:00');let add=0;if(/waiting on quote|waiting on approval|waiting on parts|follow-up|replacement recommended/i.test(st))add=1;else if(/new request|service scheduled|diagnos/i.test(st)&&d.getDate()>=21)add=1;else if(/repaired|resolved/i.test(st)&&d.getDate()>=18)add=1;const t=new Date(d.getFullYear(),d.getMonth()+add,1);if(t<new Date(new Date().getFullYear(),new Date().getMonth(),1)&&repairCaseIsOpen(c))return todayISO().slice(0,7);return budgetYM(t.getFullYear(),t.getMonth()+1);}
+function budgetExpectedRepairYM(c){
+  const l=c.latest||c.base,st=String(c.status||'');
+  const today=new Date(todayISO()+'T12:00:00');
+  const currentMonth=new Date(today.getFullYear(),today.getMonth(),1);
+  const serviceDate=l.serviceDate?new Date(l.serviceDate+'T12:00:00'):null;
+  let baseMonth=currentMonth;
+  if(serviceDate&&!Number.isNaN(serviceDate.getTime())){
+    const serviceMonth=new Date(serviceDate.getFullYear(),serviceDate.getMonth(),1);
+    if(serviceMonth>currentMonth)baseMonth=serviceMonth;
+  }
+  // If the service itself is scheduled in a future month, forecast that month first.
+  // Otherwise, open-repair timing is based on where we are in the CURRENT month,
+  // not on an older repair/update date.
+  if(baseMonth>currentMonth)return budgetYM(baseMonth.getFullYear(),baseMonth.getMonth()+1);
+  const day=today.getDate();let add=0;
+  if(/replacement recommended/i.test(st))add=1;
+  else if(/waiting on parts|follow-up/i.test(st))add=day>=15?1:0;
+  else if(/waiting on quote|waiting on approval/i.test(st))add=day>=20?1:0;
+  else if(/new request|service scheduled|diagnos/i.test(st))add=day>=21?1:0;
+  else if(/repaired|resolved/i.test(st))add=day>=18?1:0;
+  const t=new Date(today.getFullYear(),today.getMonth()+add,1);
+  return budgetYM(t.getFullYear(),t.getMonth()+1);
+}
 function budgetManualOverride(type,id){return [...budgetHistory].filter(h=>h.isCurrent&&h.autoManual==='Manual Override'&&h.sourceType===type&&h.sourceRecordId===id).sort((a,b)=>String(b.forecastDate).localeCompare(String(a.forecastDate))||b.spId-a.spId)[0]||null;}
 function budgetRepairForecasts(){const base=budgetBaseRepairReserve();return repairCaseBundles().filter(repairCaseIsOpen).map(c=>{const sourceId=c.base.eventId,ov=budgetManualOverride('Repair Case',sourceId),latest=c.latest||c.base,issue=budgetInferIssue([c.base.description,...c.updates.map(x=>x.description)].join(' ')),status=c.status||'New Request';let amount=Math.round(base*budgetIssueMultiplier(issue)*budgetStatusMultiplier(status)*100)/100,ym=budgetExpectedRepairYM(c),confidence=/replacement recommended|waiting on parts/i.test(status)?'Low':'Medium',basis=`Historical 75th percentile ${fmtMoney(base)} · ${issue} · ${status}`;if(ov){amount=ov.amount;ym=budgetYM(ov.year,ov.monthNumber);confidence=ov.confidence||'High';basis=`Manual override: ${ov.overrideReason||'User knowledge'}`;}return {key:`repair:${sourceId}`,account:BUDGET_ACCOUNT_6022,type:'Open Repair',forecastType:ov?'Revised Estimate':'Initial Estimate',forkliftId:c.base.forkliftId,workroom:c.base.workroom||fleet.find(f=>f.id===c.base.forkliftId)?.workroom||'',vendor:latest.vendor||c.base.vendor||'',amount,ym,confidence,issue,status,sourceType:'Repair Case',sourceId,basis,description:c.base.description||'',canOverride:true};});}
 function budgetPMGroups(){const pm=pmGroupSet(),g={};transactions.forEach(t=>{if(isPM(t,pm))(g[txGroupKey(t)]??=[]).push(t);});return Object.values(g).map(a=>({forkliftId:a[0].forkliftId,date:a[0].transactionDate,cost:a.reduce((s,t)=>s+Number(t.amount||0),0),vendor:a[0].vendor||''})).filter(x=>x.date&&x.cost>0);}
