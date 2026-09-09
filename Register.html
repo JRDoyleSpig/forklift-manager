@@ -2318,5 +2318,191 @@ const pmBaseRenderAll=renderAll;renderAll=function(){pmBaseRenderAll();pmInstall
 const pmBaseLoadData=loadData;loadData=async function(force=false){await pmBaseLoadData(force);for(const f of fleet)f._pmSnapshot={lastPM:f.lastPM||'',pmFrequency:f.pmFrequency||'',nextPM:f.nextPM||'',mode:f.pmMode||'auto'};pmRecalculate();renderAll();const n=await pmAutoSync();if(n){pmRenderPage();setConnection('ok',`${document.getElementById('conn-text')?.textContent||'Connected'} · PM data synced (${n})`);}};
 pmInstallUI();
 </script>
+
+<style id="pm-utilization-v3-styles">
+#pm-page-table th.pm-sortable{cursor:pointer;user-select:none}
+#pm-page-table th.pm-sortable:hover{color:var(--text)}
+.pm-usage-basis{font-size:9px;line-height:1.35;white-space:normal;min-width:150px}
+</style>
+<script>
+/* ── PM UTILIZATION / SORTING v3 — 2026-09-09 ──────────────────────────
+   Measured hour usage is the primary right-sizing input.
+   YTD installs are used only as a fallback utilization proxy when measured
+   hour history is not yet sufficient. Charlotte is highest-use; DFW and
+   Norcross are explicit second-tier workrooms. Inactive lifts and inactive
+   workrooms are excluded from the PM page.
+*/
+const PM_INSTALLS_2026={"Abilene":235,"Amarillo":264,"Asheville":772,"Austin":1012,"Baltimore":1185,"Baton Rouge":262,"Beaumont":201,"Bismarck":90,"Bluefield":341,"Buffalo":753,"Center":145,"Chantilly":1185,"Charleston":890,"Charlotte":3238,"Chattanooga":463,"College Station":199,"Corpus Christi":354,"Fargo":107,"Franklin":254,"Fredericksburg":713,"Grand Forks":160,"Greenville":1232,"Gulfport":311,"Hagerstown":1356,"Hattiesburg":183,"Hickory":911,"Houston":1687,"Jackson":291,"Jacksonville":584,"Knoxville":871,"Lafayette":299,"Lexington":1220,"Lindale":586,"Lubbock":116,"Lynchburg":494,"Memphis":608,"Meridian":199,"Mobile":555,"Myrtle Beach":925,"Nashville":2514,"New Orleans":389,"Norcross":1592,"Odessa":387,"Paducah":437,"Pensacola":1021,"Richmond":1465,"Roanoke":506,"Rochester":1107,"San Antonio":1161,"Shreveport":413,"Syracuse":1024,"Temple":381,"Texarkana":210,"Tri-Cities":819,"Twin Cities":1252,"Waldorf":868,"Waynesboro":923,"Weslaco":168,"Wilmington":774,"DFW":3111,"Waynesboro Warehouse":923};
+let pmPageSortKey='nextPM',pmPageSortDir=1;
+
+function pmInstallCount(f){
+  const w=String(f?.workroom||'').trim();
+  return Object.prototype.hasOwnProperty.call(PM_INSTALLS_2026,w)?PM_INSTALLS_2026[w]:null;
+}
+function pmUtilizationTier(f){
+  const usage=pmUsage(f),installs=pmInstallCount(f),w=String(f?.workroom||'').trim();
+  if(usage){
+    const h=usage.hoursPerWorkday;
+    if(h>=4.5)return {tier:'Very High',basis:`Measured ${h.toFixed(1)} hr/workday`,usage,installs};
+    if(h>=3.25)return {tier:'High',basis:`Measured ${h.toFixed(1)} hr/workday`,usage,installs};
+    if(h>=1.75)return {tier:'Normal',basis:`Measured ${h.toFixed(1)} hr/workday`,usage,installs};
+    return {tier:'Low',basis:`Measured ${h.toFixed(1)} hr/workday`,usage,installs};
+  }
+  if(w==='Charlotte')return {tier:'Very High',basis:`Charlotte high-use override${installs!=null?` · ${installs.toLocaleString()} installs YTD`:''}`,usage:null,installs};
+  if(w==='DFW'||w==='Norcross')return {tier:'High',basis:`High-use workroom override${installs!=null?` · ${installs.toLocaleString()} installs YTD`:''}`,usage:null,installs};
+  if(installs!=null){
+    if(installs>=1500)return {tier:'High',basis:`Install-volume proxy · ${installs.toLocaleString()} YTD`,usage:null,installs};
+    if(installs>=900)return {tier:'Normal+',basis:`Install-volume proxy · ${installs.toLocaleString()} YTD`,usage:null,installs};
+    return {tier:'Normal',basis:`Install-volume proxy · ${installs.toLocaleString()} YTD`,usage:null,installs};
+  }
+  return {tier:'Normal',basis:'Fleet baseline · insufficient hour history',usage:null,installs:null};
+}
+
+pmRightSize=function(f,observed){
+  const util=pmUtilizationTier(f),risk=pmRiskSignals(f),inactive=['Retired','Sold','Scrapped','Parked'].includes(f.status);
+  if(inactive)return {recommended:'',reason:'Inactive / parked forklift',usage:util.usage,utilization:util,action:'None'};
+
+  let recommended='Every 4 Months';
+  let reason='Normal fleet utilization; use Every 4 Months until measured hours support a different interval.';
+
+  // Actual measured hour usage is always the strongest utilization evidence.
+  if(util.usage){
+    const h=util.usage.hoursPerWorkday;
+    if(h>=3.25){recommended='Quarterly';reason=`Measured use is ~${h.toFixed(1)} hr/workday, so keep a tighter Quarterly PM.`;}
+    else if(h<1.75 && !risk.high.length && !risk.moderate.length && risk.m.serviceYTD===0 && risk.m.repairYTD<750){
+      recommended='Biannual';reason=`Measured use is only ~${h.toFixed(1)} hr/workday with a clean recent service history.`;
+    }else{
+      recommended='Every 4 Months';reason=`Measured use is ~${h.toFixed(1)} hr/workday, which fits the normal Every 4 Months target.`;
+    }
+  }else{
+    // Until hour history matures, installs/workroom intensity are only a proxy.
+    if(util.tier==='Very High'||util.tier==='High'){
+      recommended='Quarterly';
+      reason=`${util.basis}; use Quarterly until measured hour history proves otherwise.`;
+    }else{
+      recommended='Every 4 Months';
+      reason=`${util.basis}; use Every 4 Months as the conservative fleet baseline until measured hours are available.`;
+    }
+  }
+
+  // Condition/repair risk may tighten, but never loosen, the utilization recommendation.
+  if(risk.high.length && recommended!=='Quarterly'){
+    recommended='Quarterly';
+    reason+=` Tightened to Quarterly due to ${risk.high.join(', ')}.`;
+  }else if(risk.high.length){
+    reason+=` Also supported by ${risk.high.join(', ')}.`;
+  }else if(risk.moderate.length){
+    reason+=` Monitor ${risk.moderate.join(', ')}.`;
+  }
+
+  if(observed==='Monthly'&&recommended!=='Monthly')reason+=' Historical Monthly cadence appears more frequent than the current utilization evidence requires; confirm before changing.';
+  if(observed==='Annual'&&recommended!=='Annual')reason+=' Historical Annual cadence appears too loose for an active lift.';
+  const action=observed?(observed===recommended?'Keep Current':'Frequency Change Recommended'):'Set Recommended Frequency';
+  return {recommended,reason,usage:util.usage,utilization:util,action};
+};
+
+function pmActiveForPage(f){
+  if(!f)return false;
+  if(!['Active','Down for Repair'].includes(String(f.status||'').trim()))return false;
+  const w=String(f.workroom||'').trim();
+  if(!w)return false;
+  // Lease Manager active locations are the source of truth when loaded.
+  if(Array.isArray(activeWorkrooms)&&activeWorkrooms.length&&!activeWorkrooms.includes(w))return false;
+  return true;
+}
+function pmSortValue(r,key){
+  const d=r.d,f=r.f,s=r.s;
+  if(key==='id'){const m=String(f.id||'').match(/^#(\d+)$/);return m?Number(m[1]):999999;}
+  if(key==='workroom')return String(f.workroom||'').toLowerCase();
+  if(key==='vendor')return String(f.serviceVendor||'').toLowerCase();
+  if(key==='lastPM')return d.lastPM||'';
+  if(key==='lastHours')return d.lastHours==null?-1:Number(d.lastHours);
+  if(key==='observed')return String(d.observedFrequency||'').toLowerCase();
+  if(key==='recommended')return String(d.recommendedFrequency||'').toLowerCase();
+  if(key==='nextPM')return d.nextPM||'9999-99-99';
+  if(key==='status')return String(s.label||'').toLowerCase();
+  if(key==='review')return String(d.right?.action||'').toLowerCase();
+  if(key==='installs')return d.right?.utilization?.installs==null?-1:Number(d.right.utilization.installs);
+  if(key==='usage')return String(d.right?.utilization?.basis||'').toLowerCase();
+  return '';
+}
+function pmSetPageSort(key){
+  if(pmPageSortKey===key)pmPageSortDir*=-1;else{pmPageSortKey=key;pmPageSortDir=1;}
+  pmRenderPage();
+}
+function pmSortTh(key,label){
+  const mark=pmPageSortKey===key?(pmPageSortDir===1?' ↑':' ↓'):'';
+  return `<th class="pm-sortable" onclick="pmSetPageSort('${key}')">${label}${mark}</th>`;
+}
+
+pmRenderPage=function(){
+  const t=document.getElementById('pm-page-table'),stats=document.getElementById('pm-page-stats');if(!t||!stats)return;
+  const q=(formVal('pm-page-search')||'').toLowerCase(),filter=formVal('pm-page-status');
+  const all=fleet.filter(pmActiveForPage).map(f=>({f,d:pmDerivedMap.get(f.id)||pmDerive(f),s:pmStatusFor(f)}));
+  let rows=all.filter(r=>(!filter||r.s.label===filter)&&(!q||`${r.f.id} ${r.f.workroom} ${r.f.serviceVendor} ${r.d.observedFrequency} ${r.d.recommendedFrequency} ${r.s.label} ${r.d.right?.utilization?.basis||''}`.toLowerCase().includes(q)));
+
+  const on=all.filter(r=>r.s.label==='On Schedule').length,
+        soon=all.filter(r=>r.s.label==='Due Soon').length,
+        over=all.filter(r=>r.s.label==='Overdue').length,
+        review=all.filter(r=>r.d.right?.action==='Frequency Change Recommended'||r.d.right?.action==='Set Recommended Frequency').length,
+        nohist=all.filter(r=>r.s.label==='No PM History').length;
+  stats.innerHTML=`<div class="stat-card accent"><div class="stat-label">Active PM Fleet</div><div class="stat-value">${all.length}</div></div><div class="stat-card good"><div class="stat-label">On Schedule</div><div class="stat-value">${on}</div></div><div class="stat-card warn"><div class="stat-label">Due Soon</div><div class="stat-value">${soon}</div></div><div class="stat-card danger"><div class="stat-label">Overdue</div><div class="stat-value">${over}</div></div><div class="stat-card warn"><div class="stat-label">Frequency Review</div><div class="stat-value">${review}</div></div><div class="stat-card"><div class="stat-label">No PM History</div><div class="stat-value">${nohist}</div></div>`;
+
+  rows.sort((a,b)=>{
+    const av=pmSortValue(a,pmPageSortKey),bv=pmSortValue(b,pmPageSortKey);
+    if(av<bv)return -pmPageSortDir;if(av>bv)return pmPageSortDir;
+    return String(a.f.id).localeCompare(String(b.f.id),undefined,{numeric:true});
+  });
+
+  const head='<thead><tr>'+[
+    pmSortTh('id','Forklift'),pmSortTh('workroom','Workroom'),pmSortTh('vendor','Vendor'),
+    pmSortTh('lastPM','Last PM'),pmSortTh('lastHours','Hours at Last PM'),
+    pmSortTh('observed','Observed Frequency'),pmSortTh('recommended','Recommended Frequency'),
+    pmSortTh('nextPM','Next PM Due'),pmSortTh('status','Status'),pmSortTh('review','Frequency Review'),
+    pmSortTh('installs','YTD Installs'),pmSortTh('usage','Utilization Basis'),'<th>Why</th>'
+  ].join('')+'</tr></thead>';
+
+  const body=rows.map(r=>{
+    const srcCls=r.d.source==='Manual Confirmed'?'manual':r.d.source==='History Confirmed'?'confirmed':r.d.source==='Pattern Inferred'?'inferred':'',
+          action=r.d.right.action,
+          actionHtml=action==='Frequency Change Recommended'?`<span class="pm-rec-change">Change Recommended</span>`:action==='Set Recommended Frequency'?'<span class="pm-source inferred">Set Recommended</span>':'<span class="pm-rec-keep">Keep</span>',
+          util=r.d.right?.utilization||pmUtilizationTier(r.f),
+          installs=util.installs==null?'—':Number(util.installs).toLocaleString();
+    return `<tr class="fleet-row" ondblclick="pmOpenHistory('${esc(r.f.id)}')"><td class="mono"><strong>${esc(r.f.id)}</strong></td><td>${esc(r.f.workroom||'—')}</td><td>${esc(r.f.serviceVendor||'—')}</td><td>${fmtDate(r.d.lastPM)}</td><td class="mono">${r.d.lastHours==null?'—':fmtNum(r.d.lastHours)}</td><td>${esc(r.d.observedFrequency||'—')}<br><span class="pm-source ${srcCls}">${esc(r.d.source||'Unknown')}</span></td><td><strong>${esc(r.d.recommendedFrequency||'—')}</strong></td><td>${fmtDate(r.d.nextPM)}</td><td><span class="pm-status ${r.s.cls}">${esc(r.s.label)}</span></td><td>${actionHtml}</td><td class="mono">${installs}</td><td class="pm-usage-basis">${esc(util.basis||'—')}</td><td class="pm-review">${esc(r.d.right.reason||'—')}</td></tr>`;
+  }).join('');
+  t.innerHTML=head+'<tbody>'+body+(rows.length?'':'<tr><td colspan="13" class="empty">No active PM records match</td></tr>')+'</tbody>';
+};
+
+// Automatic schedule sync should update evidence dates and Next PM Due,
+// but a derived recommendation does NOT silently overwrite the approved/current PM Frequency.
+pmWriteFleetSchedule=async function(token,etype,f,d){
+  const body={__metadata:{type:etype}},
+        lastI=fieldMap[normalizeLabel('Last PM Date')],
+        freqI=fieldMap[normalizeLabel('PM Frequency')],
+        nextI=fieldMap[normalizeLabel('Next PM Due')],
+        notesI=fieldMap[normalizeLabel('Notes')];
+  if(lastI)body[lastI]=d.lastPM?d.lastPM+'T00:00:00Z':null;
+  if(d.mode==='manual'&&freqI&&f.pmFrequency)body[freqI]=f.pmFrequency;
+  if(nextI)body[nextI]=d.nextPM?d.nextPM+'T00:00:00Z':null;
+  if(notesI&&d.mode==='auto')body[notesI]=pmFullNotes(f,'auto');
+  const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(`${f.id}: ${await r.text()}`);
+};
+
+const pmV3BaseInstallUI=pmInstallUI;
+pmInstallUI=function(){
+  pmV3BaseInstallUI();
+  const sub=document.querySelector('#view-pm .section-title')?.nextElementSibling;
+  if(sub)sub.textContent='Hours-driven preventive maintenance · installs are a fallback utilization proxy when hour history is limited · inactive lifts/workrooms excluded';
+  const status=document.getElementById('pm-page-status');
+  if(status){
+    [...status.options].forEach(o=>{if(o.value==='Parked — PM Paused'||o.value==='Inactive')o.remove();});
+  }
+};
+pmInstallUI();
+pmRecalculate();
+pmRenderPage();
+</script>
+
 </body>
 </html>
