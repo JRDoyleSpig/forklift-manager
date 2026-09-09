@@ -305,168 +305,208 @@ tr.fleet-row:hover td{background:var(--accent-light)}
         <div class="section-header" style="align-items:flex-start">
           <div>
             <div class="section-title">Help &amp; Training</div>
-            <div class="muted" style="font-size:11px;margin-top:3px">How the Forklift Manager works, when to use each workflow, and what data is saved where.</div>
+            <div class="muted" style="font-size:11px;margin-top:3px">Current operating guide for the full Forklift Manager — fleet, service, PMs, hours, lifecycle, rentals, accounting, budget, grading, and replacement planning.</div>
           </div>
           <div class="section-actions"><input id="help-search" class="search-box" placeholder="Search help…" style="width:260px" oninput="filterHelp()"></div>
         </div>
 
         <div class="panel" style="margin-bottom:14px;border-left:4px solid #2d6cdf">
-          <div class="panel-head"><div class="panel-title">The most important rule: what is the master data?</div></div>
+          <div class="panel-head"><div class="panel-title">How the data fits together</div></div>
           <div style="padding:14px 16px;font-size:12px;line-height:1.65">
-            <b>Forklift Transactions is the financial master record.</b> If money was spent on a forklift, the cost should ultimately exist in Transactions. That is what drives yearly expense, lifetime expense, repair expense, PM spend, rental spend, service-call counts, and Aging / Grading cost metrics.<br><br>
-            The other SharePoint lists have different jobs: <b>Forklift Fleet</b> is the current-state master for the asset; <b>Forklift Service Events</b> records the operational story of a PM or repair visit and holds its work orders/attachments; <b>Forklift Hour Readings</b> is the meter-history master; and <b>Forklift Rentals</b> tracks open rentals and costs that may not be known yet. These lists work together rather than replacing Transactions.
+            <b>Forklift Fleet</b> is the current-state master for each asset. <b>Forklift Transactions</b> is the financial master for money spent. <b>Forklift Service Events</b> records PMs, repair activity, documents, and lifecycle history. <b>Forklift Hour Readings</b> preserves meter history. <b>Forklift Rentals</b> tracks rental status/cost before and after invoices arrive. <b>Forklift Budget</b> and <b>Budget Forecast History</b> support monthly 6022/6023 forecasting. Lease Manager supplies the active-workroom list.<br><br>
+            The app intentionally keeps <b>current state, operational history, meter history, financial history, and planning</b> separate. One workflow may update more than one list, but the lists do not replace one another.
           </div>
         </div>
 
         <div class="panel" style="margin-bottom:14px">
-          <div class="panel-head"><div class="panel-title">Quick Start — Which button do I use?</div></div>
+          <div class="panel-head"><div class="panel-title">Quick Start — Which workflow do I use?</div></div>
           <div style="padding:10px 14px 14px;overflow:auto">
             <table class="help-table">
-              <thead><tr><th>What happened?</th><th>Use this</th><th>Why</th></tr></thead>
+              <thead><tr><th>What happened?</th><th>Use this</th><th>What it does</th></tr></thead>
               <tbody>
-                <tr><td>You received a normal monthly NetSuite expense export</td><td><b>Transactions → Import NetSuite CSV</b></td><td>Imports the accounting expense lines, catches duplicates, suggests PM/service-call classification, and keeps Transactions as the financial master.</td></tr>
-                <tr><td>You received a PM work order or PM invoice</td><td><b>Service / Hours → Upload PM / Work Order / Invoice</b></td><td>This is the normal PM workflow. The app stores the document, logs the PM service event, updates Last PM, records hours when present, and can create the PM transaction when an invoice amount is confirmed.</td></tr>
-                <tr><td>A workroom reports a forklift problem</td><td><b>Service / Hours → Open Repair Case</b></td><td>Start the operational repair record immediately—before you know the cost. Track scheduling, diagnosis, quotes, approvals, parts, rentals, follow-up visits, and the final outcome.</td></tr>
-                <tr><td>You received any forklift work order/service document with an hour reading</td><td><b>Upload PM / Work Order / Invoice</b></td><td>Reads the document, matches by serial when possible, proposes the date/reference/hours, and updates hours only after confirmation. Hours and cost are optional.</td></tr>
-                <tr><td>You only need to correct Current Hours manually</td><td><b>Edit Forklift</b></td><td>Changing Current Hours creates an Hour Readings history record automatically.</td></tr>
-                <tr><td>An expense was assigned to the wrong forklift/category/vendor</td><td><b>Transactions → double-click the row</b></td><td>Corrects the existing SharePoint transaction without deleting/reimporting it.</td></tr>
-                <tr><td>A rental is needed during an open repair</td><td><b>Open Repair Case → Manage / Add Update</b></td><td>Records the rental vendor and start date immediately. Cost can remain Pending until the invoice arrives.</td></tr>
+                <tr><td>A workroom reports a forklift problem</td><td><b>Service / Hours → Open Repair Case</b></td><td>Starts the operational case immediately. Cost can stay blank while you track scheduling, diagnosis, quote/approval, parts, downtime, rental need, follow-up, and final resolution.</td></tr>
+                <tr><td>You receive a PM work order or PM invoice</td><td><b>Service / Hours → Upload PM / Work Order / Invoice</b></td><td>Creates/reuses the PM Service Event, stores the document, records hours when present, updates PM evidence, and can create a PM transaction when a real invoice amount is confirmed.</td></tr>
+                <tr><td>You receive a normal monthly NetSuite export</td><td><b>Transactions → Import NetSuite CSV</b></td><td>Reviews accounting by invoice/document, reconciles duplicates, separates 6022 from 6023, allows exclusions, and writes approved financial records.</td></tr>
+                <tr><td>A forklift moves to another workroom</td><td><b>Edit Forklift → Transfer Forklift</b></td><td>Creates lifecycle history, updates Current Workroom, applies the destination workroom vendor, and preserves historical workroom assignment for older records.</td></tr>
+                <tr><td>The same workroom moves buildings</td><td><b>Edit Forklift → Building Relocation</b></td><td>Records a light relocation event without treating it as a transfer to a different workroom.</td></tr>
+                <tr><td>A lift becomes Down, Parked, Retired, Sold, Scrapped, or is reactivated</td><td><b>Edit Forklift → Lifecycle controls</b></td><td>Updates current status and creates the permanent status/disposition audit trail.</td></tr>
+                <tr><td>You only need to correct/update Current Hours</td><td><b>Edit Forklift</b></td><td>Updates Fleet Current Hours and automatically creates a historical Hour Reading when the value changes.</td></tr>
+                <tr><td>A rental is needed during a repair</td><td><b>Repair Case → Manage / Add Update</b></td><td>Creates/tracks the rental separately from repair status. Cost may remain Pending until the invoice arrives.</td></tr>
+                <tr><td>You need to manage PM timing</td><td><b>PM Schedule</b></td><td>Shows Last PM, Hours at Last PM, observed cadence, hours-driven recommended cadence, Next PM Due, status, and Frequency Review.</td></tr>
+                <tr><td>You need monthly repair/rental budget exposure</td><td><b>Forklift Budget</b></td><td>Separates 6022 Repair &amp; Maintenance from 6023 Rental and combines accounting actuals with open repair, PM, and rental forecasts.</td></tr>
+                <tr><td>You need condition/risk scoring</td><td><b>Aging / Grading</b></td><td>Scores weighted repair history, weighted service calls, and hours. It does not make the capital decision.</td></tr>
+                <tr><td>You need capital timing</td><td><b>Replacement Planning</b></td><td>Converts condition/reliability evidence and workroom fleet needs into suggested/planned replacement timing without changing the grade.</td></tr>
               </tbody>
             </table>
           </div>
         </div>
 
         <div id="help-topics">
-          <details class="help-topic" open><summary>When do I use PM Upload vs Open Repair Case?</summary><div class="help-body">
-            <p><b>Upload PM / Work Order / Invoice</b> when planned maintenance occurs and you receive the work order or invoice. That upload becomes the PM service record.</p>
-            <p><b>Open Repair Case</b> as soon as a workroom reports a forklift problem—even before a technician visits and long before you know the cost. A repair case stays open through scheduling, diagnosis, quotes, approval, parts, rentals, follow-up visits, and final resolution.</p>
-            <p>You do <b>not</b> need to create a repair case just because a historical/accounting transaction exists. The practical rule is: <b>Transactions answer “what did we spend?” Repair Cases answer “what is happening with this problem?” PM/Service Events answer “what service actually occurred?”</b></p>
+          <details class="help-topic" open><summary>Dashboard — what belongs in Needs Attention?</summary><div class="help-body">
+            <p>The Dashboard is for <b>fleet condition and operational exceptions</b>, not routine preventive-maintenance scheduling. PM overdue/due-soon items are intentionally managed on the separate <b>PM Schedule</b> page and are not shown in Dashboard Needs Attention.</p>
+            <p>Location issues, repair/downtime concerns, stale or inconsistent operating data, and other actionable fleet exceptions can still appear on the Dashboard. The fleet counts distinguish operating from inactive/parked assets.</p>
           </div></details>
 
-          <details class="help-topic"><summary>Very important — avoiding duplicate expenses</summary><div class="help-body">
-            <p>If a PM invoice upload creates a confirmed PM transaction, or you enter known expense lines during a repair-case update, those lines are written into <b>Forklift Transactions immediately</b>. If the same invoice later appears in a NetSuite CSV, the import duplicate check should identify matching Date + Forklift ID + Invoice Number + Amount lines and mark them to Skip.</p>
-            <p>For repairs, you will usually <b>not know the cost yet</b>. That is normal. Open and manage the repair case with no expense amount. When the invoice later posts, let the monthly NetSuite import create the financial transaction. Only enter repair expense manually when you already have a real invoice/known amount and want it recorded immediately.</p>
-            <p>Always review the NetSuite preview before importing. A changed date, invoice number, forklift assignment, or split amount can prevent an otherwise related line from matching as a duplicate.</p>
-          </div></details>
-
-          <details class="help-topic"><summary>Fleet — adding and editing forklifts</summary><div class="help-body">
-            <p>The Fleet list represents the forklift’s <b>current state</b>: ID, make/model/serial, current workroom, status, current hours, primary service vendor, PM frequency, attachments/poles, acquisition information, estimated replacement cost, and notes.</p>
-            <p><b>Estimated Replacement Cost</b> is entered manually for each forklift and is used only for lifetime-spend context/flagging. It does not directly add grade points.</p>
-            <p>Double-click a forklift to edit it. Current workrooms are validated against active Lease Manager locations for Active, Down for Repair, and Parked units. Retired/Scrapped/Sold units may remain associated with an inactive historical location.</p>
-            <p>Changing Current Hours automatically creates a reading in Forklift Hour Readings. If the new reading is lower than the current reading, the app warns you and requires confirmation.</p>
+          <details class="help-topic"><summary>Fleet — All, Active, Inactive, adding and editing forklifts</summary><div class="help-body">
+            <p><b>Forklift Fleet is the current-state master.</b> It stores the permanent Forklift ID, make/model/serial, current workroom, current status, current hours, service vendor, PM fields, attachments/poles, acquisition information, estimated replacement cost, and notes.</p>
+            <p><b>Active Forklifts</b> includes Active and Down for Repair. <b>Inactive Forklifts</b> includes Parked, Retired, Scrapped, and Sold. All Forklifts shows the complete fleet.</p>
+            <p>Forklift IDs are permanent and are never reused. Once a forklift exists, Current Workroom and Status are controlled by the Lifecycle workflows so history is not lost.</p>
+            <p>Changing Current Hours through Edit Forklift creates an Hour Reading automatically. A lower meter value produces a warning because it may indicate an incorrect prior reading or a meter replacement/reset.</p>
           </div></details>
 
           <details class="help-topic"><summary>Status definitions</summary><div class="help-body">
-            <p><b>Active:</b> In normal operating service.</p>
-            <p><b>Down for Repair:</b> Temporarily unavailable because it needs or is receiving repair. It is expected to return to service.</p>
-            <p><b>Parked:</b> Still owned and physically retained, but intentionally not being used or repaired at this time. It may return to service later. Parked units remain visible but are excluded from the Active count.</p>
-            <p><b>Retired:</b> Permanently removed from normal operating service with no intention to return it to regular use. It may still be physically on site while disposition is decided.</p>
-            <p><b>Sold:</b> Ownership has been transferred through sale.</p>
-            <p><b>Scrapped:</b> Permanently disposed of as scrap.</p>
-            <p>Disposition Date is manually entered for Retired, Sold, and Scrapped. The app does not automatically invent a disposition date.</p>
+            <p><b>Active:</b> normal operating service. <b>Down for Repair:</b> temporarily unavailable but expected to return to service. <b>Parked:</b> still owned/retained but intentionally not being used or actively repaired; it may return later.</p>
+            <p><b>Retired:</b> permanently removed from normal service but may still be physically retained while disposition is decided. <b>Sold:</b> ownership transferred by sale. <b>Scrapped:</b> permanently disposed of as scrap.</p>
+            <p>Retired → Active must use <b>Reactivate</b>. Sold and Scrapped are final. Disposition Date is entered from the real event date; the app does not invent one.</p>
+          </div></details>
+
+          <details class="help-topic" id="life-help-topic"><summary>Transfers, building relocation, status changes, reactivation, and disposition</summary><div class="help-body">
+            <p><b>Forklift Fleet is current state; Lifecycle History is the audit trail.</b> Use the lifecycle buttons in the forklift record instead of directly changing Current Workroom or Status.</p>
+            <p><b>Transfer Forklift</b> records From Workroom → To Workroom and updates the Fleet record. The destination workroom's Primary Service Vendor and phone follow the lift. If status also changes, the app creates a separate Status Change event.</p>
+            <p><b>Building Relocation</b> is for the same workroom moving to a new building/address. The workroom name remains the same because the property/building information belongs in Lease Manager.</p>
+            <p><b>Change Status</b> handles Active, Down for Repair, and Parked. <b>Reactivate</b> is required for Retired → Active. <b>Retire / Dispose</b> records Retirement, Sold, or Scrapped; Sold/Scrapped can store proceeds or scrap value. Disposition proceeds are lifecycle information only and do not reduce repair spend or create a financial transaction.</p>
+            <p>Lifecycle records are normally never deleted. Use <b>Void / Entered in Error</b> with a reason when a lifecycle record is wrong. Voided records remain visible for audit but are ignored by lifecycle logic.</p>
+            <p>Historical backfills may be marked <b>Historical Backfill</b> and <b>Date Approximate</b>. Backdated service/NetSuite records use lifecycle history to determine the workroom that applied on the record date, so old costs and service stay at the historical location.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Primary Service Vendor — workroom behavior</summary><div class="help-body">
+            <p>Primary Service Vendor is treated as a <b>workroom-level operating relationship</b>. Transfers pick up the destination workroom's vendor. If you intentionally change the primary vendor on one current forklift, the app can synchronize that vendor/phone across the other current forklifts at the same workroom.</p>
+            <p>PM uploads and repair workflows prefill the current primary vendor, but you may use a different vendor for a single event. A one-off service vendor should not silently replace the workroom's primary vendor.</p>
           </div></details>
 
           <details class="help-topic"><summary>Transactions — financial master data</summary><div class="help-body">
-            <p>Transactions contains the expense lines used for financial reporting and grading. Negative transactions/credits reduce totals. The app calculates yearly expense and lifetime expense live from the transaction history rather than storing fixed totals on the forklift.</p>
-            <p>Typical categories include PM Service, Repair / Expense, Rental, and other expense classifications. PM expense counts toward total operating expense but is excluded from Repair Expense YTD used in the Aging / Grading repair score. Rental expense also counts toward total expense but is currently kept separate from grading repair cost.</p>
-            <p>Double-click a transaction to correct fields such as forklift, workroom, vendor, invoice, amount, category, service-call flag, hours, downtime, rental required, description, URL, or notes.</p>
-            <p><b>Major Life-Extending Repair:</b> for a repair that materially restores a major component and is expected to extend useful life, double-click the repair transaction and manually check Major Life-Extending Repair. Major Repair Notes are required. The designation reduces only the grading contribution; it does not reduce the actual financial spend shown in history.</p>
-          </div></details>
-
-          <details class="help-topic"><summary>NetSuite CSV import</summary><div class="help-body">
-            <p>Use the monthly NetSuite CSV for ongoing accounting expenses. The importer reads the forklift from the Memo, vendor from Main Line Name, and presents a review screen before anything is saved.</p>
-            <p>PMs are suggested using the known PM patterns (including the common $135 PM labor charge), but the category remains editable. Repair invoices can receive one high-confidence Service Call suggestion. PMs never count as service calls.</p>
-            <p>Primary Service Vendor is compared during review. A different vendor does not automatically replace the primary vendor because one-off vendors are common.</p>
+            <p><b>Forklift Transactions is the financial master.</b> If money was spent on a forklift and should be part of forklift reporting, the cost should ultimately exist here. Negative transactions/credits reduce totals.</p>
+            <p>Transactions drive yearly/lifetime expense, repair spend, PM spend, rental spend, service-call counts, Budget actuals, Aging / Grading inputs, and portions of Replacement Planning.</p>
+            <p>Common categories include <b>Repair / Expense, PM Service, Rental</b>, and other approved classifications. PM and rental costs remain real operating expense but are excluded from the Aging / Grading repair-cost score.</p>
+            <p>Double-click a transaction to correct the forklift, historical workroom, vendor, invoice/reference, amount, category, service-call flag, hours, downtime, rental requirement, description, URL, or notes. Correct the existing record rather than deleting/reimporting whenever practical.</p>
           </div></details>
 
           <details class="help-topic"><summary>What exactly counts as a Service Call?</summary><div class="help-body">
-            <p>A service call represents the <b>visit/event</b>, not every invoice line. A multi-line repair invoice may contain labor, parts, freight, and other charges, but only one line should carry Service Call = Yes for that repair event.</p>
-            <p>PMs always have Service Call = No. Rental-only expense lines also do not count as service calls. This prevents service-call counts from being inflated by accounting line detail.</p>
+            <p>A Service Call represents the <b>repair visit/event</b>, not every accounting line on an invoice. A multi-line invoice may contain labor, parts, freight, and fees, but normally only one line for that repair event should carry Service Call = Yes.</p>
+            <p><b>PMs always use Service Call = No.</b> Rental-only transactions also do not count as service calls. This prevents service-call history from being inflated by accounting detail.</p>
           </div></details>
 
-          <details class="help-topic"><summary>PM workflow — work orders and invoices</summary><div class="help-body">
-            <p><b>Upload PM / Work Order / Invoice is the normal PM workflow.</b> Upload the PM work order when you receive it, or upload the PM invoice if that is the document you have.</p>
-            <p>The app detects PM wording, matches the forklift by serial when possible, saves the document as a PM Service Event, updates Last PM Date, and records Current Hours / Hour Readings when a meter reading is present.</p>
-            <p>If the uploaded document is an invoice and you confirm an invoice amount, the app also creates a <b>PM Service</b> transaction immediately with Service Call = No. If there is no known cost yet, leave Invoice Amount blank; the later monthly NetSuite import will create the financial transaction.</p>
-            <p>PM expense is excluded from repair-cost grading and PMs never count as service calls.</p>
+          <details class="help-topic"><summary>Major Life-Extending Repair (MLER)</summary><div class="help-body">
+            <p>Use MLER only when a repair materially restores a major component and is expected to extend useful life. It is a manual management classification; the app does not assign it from dollar amount alone.</p>
+            <p>Major Repair Notes are required. The full repair cost remains in actual yearly/lifetime spend, but only <b>50%</b> of an MLER's repair cost enters the Aging / Grading repair calculation before year weighting.</p>
+            <p>Replacement Planning also evaluates recent MLER performance. A successful recent MLER with little post-repair spend/service activity can defer a suggested replacement; continued repair activity after the MLER reduces that benefit.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>NetSuite CSV import</summary><div class="help-body">
+            <p>The monthly NetSuite importer is <b>invoice/document-centered</b>. Review the proposed action before anything is saved. The importer matches forklift information from the accounting memo/known identifiers, preserves historical workroom assignment where lifecycle history exists, and checks existing Transactions for duplicates.</p>
+            <p><b>6022</b> is handled as forklift Repair / Expense or PM Service. PM suggestions use known PM patterns, but classification remains reviewable. A repair document can receive one Service Call suggestion; PM always remains Service Call = No.</p>
+            <p class="ns-import-v2-help"><b>6023 Rental:</b> confirmed forklift-rental wording can be imported as Rental; ambiguous rental/equipment charges require review; obvious non-forklift equipment such as scissor/boom/aerial lifts should be excluded. Rental-company equipment numbers are never treated as Forklift Manager IDs. Multi-line 6023 invoices are consolidated to one Rental transaction and can reconcile an existing open rental.</p>
+            <p>Use <b>Exclude — Accounting Miscoding</b>, <b>Exclude — Not Forklift Related</b>, or <b>Exclude — Other</b> when the accounting document should not enter Forklift Manager. Exclusions are preferable to forcing bad accounting data into the database.</p>
+            <p>Multiple NetSuite lines can reconcile to a transaction/document already entered through a service or rental workflow. Always review the import preview before clicking Import Approved Documents.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Avoiding duplicate expenses</summary><div class="help-body">
+            <p>If a PM invoice upload creates a PM transaction, a repair update records known invoice expense, or a rental is completed with known cost, the financial record may already exist before the monthly NetSuite import.</p>
+            <p>The importer checks invoice/date/forklift/amount relationships and supports many accounting lines reconciling to an existing transaction. Matching records should be skipped/reconciled rather than created again.</p>
+            <p>For normal repairs, it is usually best to <b>open/manage the Repair Case without guessing cost</b> and let NetSuite create the financial record when the invoice posts.</p>
           </div></details>
 
           <details class="help-topic"><summary>Repair Cases — the full workflow</summary><div class="help-body">
-            <p><b>1. Open the case when the workroom reports the problem.</b> Enter the forklift, date reported, problem/request, who reported it if useful, vendor, current case status, and Forklift Availability. For initial service, choose Not Scheduled, Requested / Awaiting Date, or Scheduled — Date Confirmed. Only enter an Initial Service Date when the vendor actually gives you one. No cost is required.</p>
-            <p><b>2. Manage the same case as things change.</b> Double-click it in Open Repair Cases and add an update. Typical statuses are New Request, Service Scheduled, Diagnosing, Waiting on Quote, Waiting on Approval, Waiting on Parts, Follow-Up Service Needed, Replacement Recommended, Repaired / Resolved, Parked, Retired / Disposed, or Cancelled / No Longer Needed. Rental status stays separate from repair-case status.</p>
-            <p><b>3. Availability and Fleet Status are separate from rental.</b> A lift may be Usable, Limited Use, or Down / Unusable while the repair is open. Down / Unusable suggests Fleet Status = Down for Repair, but it does not automatically require a rental. A rental can be added later if downtime becomes long enough to justify one.</p><p><b>4. Add every useful technician visit/work order to that case.</b> An update can store the vendor, work-order/invoice reference, hours, downtime, attachments, notes, rental information, and an optional Fleet status change. Hours update Current Hours and Hour Readings only after confirmation.</p>
-            <p><b>5. Costs normally come later.</b> You usually leave repair expense blank and allow the monthly NetSuite import to create the Transactions. If you already have a final invoice and enter expense lines during the update, they become Transactions immediately and duplicate safety should skip them during the later CSV import.</p>
-            <p><b>6. Close the case only for a final outcome.</b> Repaired / Resolved, Parked, Retired / Disposed, or Cancelled / No Longer Needed remove the case from the Open Repair Cases queue. Replacement Recommended stays open until a final decision is made.</p>
-            <p><b>Attachments:</b> photos, quotes, work orders, and invoices saved with a Repair Case update appear in Case History. Click an attachment filename to open the SharePoint file and confirm what was saved with that update.</p>
+            <p><b>Open the case when the problem is reported.</b> No invoice or cost is required. Record the issue, request date, reporter when useful, vendor, current case status, forklift availability, and any confirmed initial service date.</p>
+            <p>Manage the same case through statuses such as New Request, Service Scheduled, Diagnosing, Waiting on Quote, Waiting on Approval, Waiting on Parts, Follow-Up Service Needed, Replacement Recommended, Repaired / Resolved, Parked, Retired / Disposed, or Cancelled / No Longer Needed.</p>
+            <p><b>Availability, Fleet Status, and Rental Need are separate.</b> A forklift may be Usable, Limited Use, or Down / Unusable without automatically requiring a rental.</p>
+            <p>Add technician visits/updates to the existing case. Updates can store vendor, work-order/invoice reference, hours, downtime, attachments, notes, rental information, and an optional Fleet status change. A Fleet status change also creates lifecycle history.</p>
+            <p>Close the case only when there is a final outcome. Replacement Recommended stays open until management makes a final operating/disposition decision.</p>
           </div></details>
 
           <details class="help-topic"><summary>PM / Work Order / Invoice upload</summary><div class="help-body">
-            <p>This workflow is for PM work orders, PM invoices, and other service documents. It may contain an hour-meter reading and/or invoice cost, but neither is required. The app reads text from the uploaded PDF and looks for serial number, Hours, Work Order number, Date Completed (preferred), Date Started, vendor indicators, and PM wording.</p>
-            <p>When a serial number is found, serial matching is preferred over a typed forklift number because it is safer when source data contains an incorrect unit number. The app shows its proposed match and values for you to review before saving.</p>
-            <p>The service date should come from <b>Date Completed</b> when the document contains it; otherwise Date Started; if neither can be read, the form falls back to today and you should correct it manually.</p>
-            <p>The app never needs you to invent hours or cost. If no reliable reading or invoice amount is present, leave that field blank.</p>
+            <p>This workflow accepts PM work orders, PM invoices, and other forklift service documents. The PDF reader looks for serial number, meter hours, work-order/invoice reference, completion/start date, vendor indicators, PM wording, and invoice amount where available.</p>
+            <p><b>Serial matching is preferred</b> when a reliable serial is found. Date Completed is preferred over Date Started. You review/correct the proposed match before saving.</p>
+            <p>A PM upload creates/reuses a PM Service Event and stores the document as a SharePoint attachment. If hours are present and accepted, Fleet Current Hours and Hour Readings are updated. If a real invoice amount is confirmed, the workflow can create the PM Service transaction immediately; otherwise NetSuite can create the financial transaction later.</p>
+            <p>Do not invent missing hours or cost. Leave a field blank when the document does not support it.</p>
+          </div></details>
+
+          <details class="help-topic" id="pm-schedule-help"><summary>PM Schedule — evidence, right-sizing, Next PM Due, and Frequency Review</summary><div class="help-body">
+            <p><b>PMs are managed on the separate PM Schedule page</b>, not on Dashboard Needs Attention. The PM page includes only Active and Down for Repair forklifts assigned to an active Lease Manager workroom. Parked, Retired, Sold, Scrapped, and inactive-workroom units are excluded from the active PM table.</p>
+            <p><b>Last PM evidence:</b> PM Service Events are preferred; reliable PM Transactions are the fallback. Service Event and Transaction records within about 3 days are treated as the same PM visit. Hours at Last PM come from the PM record itself or a nearby Hour Reading when available.</p>
+            <p><b>Observed Frequency</b> describes historical cadence. The app uses the median spacing between PM visits: Monthly 20–45 days, Quarterly 70–105, Every 4 Months 106–150, Biannual 151–225, Annual 300–430. Two visits produce an inferred pattern; repeated consistent intervals can become History Confirmed. Manual Confirmed schedules remain user-controlled.</p>
+            <p><b>Recommended Frequency is hours-driven.</b> Measured meter usage is the strongest input. The app requires at least two valid readings spanning at least 45 days and calculates operating hours per weekday. About <b>3.25+ hr/workday</b> recommends Quarterly; roughly <b>1.75–3.24</b> supports Every 4 Months; below <b>1.75</b> can support Biannual only when recent repair/service history is clean.</p>
+            <p>When measured hour history is not mature, <b>YTD installs are only a fallback utilization proxy</b>. Charlotte is treated as Very High utilization; DFW and Norcross as High utilization. Other workrooms with 1,500+ installs YTD are treated as High. High/Very High proxy use recommends Quarterly; otherwise the conservative fleet baseline is Every 4 Months until measured hours prove otherwise.</p>
+            <p>Condition can <b>tighten but never loosen</b> the usage recommendation. High signals include 12,000+ hours, age 15+, $3,000+ Repair YTD, or 3+ Service Calls YTD. Moderate signals are shown for monitoring.</p>
+            <p><b>Next PM Due = Last PM + Recommended Frequency.</b> Frequency Review shows <b>Keep</b>, <b>Frequency Change Recommended</b>, or <b>Set Recommended</b>. The recommendation does not silently overwrite an approved/manual schedule.</p>
+            <p>The PM table is sortable by clicking column headers and searchable/filterable. Double-click a forklift to open PM History showing visit dates, hours, source, vendor/reference, and spacing between PMs. Recalculate PM Data refreshes the derived schedule from current Fleet, Transactions, Service Events, and Hour Readings.</p>
           </div></details>
 
           <details class="help-topic"><summary>Hour Readings and Current Hours</summary><div class="help-body">
-            <p>Forklift Fleet stores the latest Current Hours. Forklift Hour Readings preserves the historical readings. A reading can come from a Manual Update, PM, Repair, or Work Order.</p>
-            <p>When an accepted new reading differs from Current Hours, the app updates the Fleet record and creates the historical reading. Duplicate guards prevent an identical forklift/date/hours reading from being created twice.</p>
-            <p>Hours are also an Aging / Grading input, so keeping them current improves replacement-risk visibility.</p>
+            <p>Forklift Fleet stores the latest <b>Current Hours</b>; Forklift Hour Readings preserves the historical meter trail. Readings may come from Manual Update, PM, Repair, or Work Order workflows.</p>
+            <p>Duplicate guards prevent the same forklift/date/hours reading from being created twice. A lower meter reading requires confirmation.</p>
+            <p>Hours affect both <b>Aging / Grading</b> and <b>PM right-sizing</b>. PM utilization becomes much more reliable once each lift has at least two valid readings 45+ days apart, so continuing to capture hours from every useful work order/PM is important.</p>
           </div></details>
 
-          <details class="help-topic"><summary>Primary Service Vendor behavior</summary><div class="help-body">
-            <p>PM uploads, Open Repair Case, and repair updates prefill the forklift’s Primary Service Vendor and phone when available. You may use a different vendor for a particular event.</p>
-            <p>If the service vendor differs from the primary vendor, the app asks whether you want to update the forklift’s Primary Service Vendor. It does not change it silently because a different vendor may be a one-time service provider.</p>
+          <details class="help-topic"><summary>Rentals — status, cost, invoice, and NetSuite reconciliation</summary><div class="help-body">
+            <p>Rental need is separate from repair-case status and forklift availability. Use <b>Rental Needed / Approved</b> only after the decision is made to obtain a rental.</p>
+            <p><b>Rental Status</b> tracks Requested, Active, Returned, or Cancelled. <b>Cost Status</b> separately tracks Pending or Complete. A rental may remain open with cost blank while you wait for the invoice.</p>
+            <p>Double-click a rental in Open Rentals / Missing Cost to enter final cost/reference/vendor or attach the invoice. When cost becomes Complete, the app creates a Rental transaction unless a matching one already exists.</p>
+            <p>NetSuite 6023 imports can match/reconcile the existing rental. Rental Spend YTD and Rental Days YTD feed management reporting and Replacement Planning; rental expense is excluded from Aging / Grading repair-cost points.</p>
           </div></details>
 
-          <details class="help-topic"><summary>Rentals — status, cost, invoices, and transactions</summary><div class="help-body"><p>Rental need is separate from forklift availability and repair-case status. Use <b>Rental Needed / Approved</b> only after the decision is made to obtain a rental.</p><p><b>Rental Status</b> tracks Requested, Active, Returned, or Cancelled. <b>Cost Status</b> separately tracks Pending or Complete.</p><p>Double-click a rental in Open Rentals / Missing Cost to manage it. When the final cost is entered and Cost Status becomes Complete, the app creates a <b>Rental</b> transaction unless a matching rental transaction already exists. You may also upload the rental invoice there; the app proposes vendor, reference, and amount and warns you if it cannot confidently determine key information.</p><p>The later monthly NetSuite import still checks for duplicates. Always review the import preview before saving.</p></div></details>
-
-<details class="help-topic"><summary>Rentals — open cost, vendor, expense, and follow-up</summary><div class="help-body">
-            <p>A repair case does <b>not</b> automatically require a rental. Track whether the forklift is Usable, Limited Use, or Down / Unusable first. If a down unit remains unavailable long enough that a rental is justified, add a repair-case update with <b>Rental Needed / Approved</b>. Rental status is tracked separately as Requested, Active, Returned, or Cancelled. Cost status is separately Pending or Complete. If the invoice has not arrived, leave cost blank and Cost Status = Pending; it remains in Open Rentals / Missing Cost until completed.</p>
-            <p>Once the rental cost is known, the expense belongs in Forklift Transactions with Category = Rental so Rental Spend YTD and Lifetime Rental Spend can be calculated for the affected forklift. Rental Days YTD tracks the duration separately.</p>
-            <p>Rental expense is part of total forklift operating expense but is currently excluded from Repair Expense YTD used for the Aging / Grading repair-cost score.</p>
+          <details class="help-topic"><summary>Forklift Budget — 6022 vs 6023, forecasts, close, and reopen</summary><div class="help-body">
+            <p>The Budget page keeps <b>6022 Repair &amp; Maintenance</b> and <b>6023 Forklift Rental</b> as separate monthly budget pools. Rental budget is never treated as available repair budget.</p>
+            <p><b>Accounting Actual</b> comes from Forklift Transactions. Forecast exposure is built from currently known <b>open repair cases, expected PMs, and rentals</b>. Open-repair estimates use historical repair experience, issue type, case status, and timing. Manual forecast overrides can be recorded with a reason.</p>
+            <p>The page shows the selected month plus a forward outlook and explains what is driving the projection. A future month is forecast-only. The current month combines actuals with known future exposure.</p>
+            <p><b>Close Month</b> is used after the monthly NetSuite import has been completed/reviewed. Closing saves the month-end forecast/actual snapshot for later accuracy review. If accounting actuals change after close, the page flags that change. <b>Reopen Month</b> requires a reason.</p>
+            <p>Annual budgets can be uploaded from Excel. When the requested year's budget is not present, the app can fall back to the latest prior-year budget for the same month/account until a new budget is provided.</p>
+            <p>Leadership PDF and Excel Detail report 6022 and 6023 independently and include the underlying actual/forecast drivers.</p>
           </div></details>
 
-          <details class="help-topic"><summary>PM compliance</summary><div class="help-body">
-            <p>PM Count YTD is compared with the forklift’s PM Frequency. Expected annual counts are: Monthly 12, Quarterly 4, Every 4 months 3, Biannual 2, and Annual 1.</p>
-            <p>The app shows On Track, Behind, or Frequency Missing. PM compliance is currently an operational flag and does not add penalty points to the Aging / Grading score.</p>
-          </div></details>
-
-          <details class="help-topic"><summary>Aging / Grading</summary><div class="help-body">
-            <p>The grade combines <b>weighted recent Repair Cost</b>, <b>weighted Service Calls</b>, and <b>Total Hours</b>. PM expense and rental expense are excluded from repair-cost grading. PMs and rental-only transactions never count as service calls.</p>
-            <p><b>Repair history weighting:</b> current year = 100%; prior year = 50%; two years prior = 25%. Older repair history remains visible in annual and lifetime reporting but does not add repair points.</p>
-            <p><b>Major Life-Extending Repairs:</b> these are manually identified on a repair transaction when the work materially restores a major component and is expected to extend useful life. Major Repair Notes are required. The full actual cost remains in annual and lifetime spend, but only 50% of the repair cost is used for grading before the year weighting is applied. The app never assigns this designation automatically based on dollar amount.</p>
-            <p><b>Weighted Repair Cost points:</b> $0 = 0; $1–$1,499 = 1; $1,500–$2,999 = 2; $3,000–$5,999 = 3; $6,000+ = 4.</p>
-            <p><b>Service-call history weighting:</b> current year = 100%; prior year = 75%; two years prior = 50%; three years prior = 10%. Older calls remain informational only.</p>
-            <p><b>Weighted Service Call points:</b> under 1.00 = 0; 1.00–2.99 = 1; 3.00–4.99 = 2; 5.00–6.99 = 3; 7.00+ = 4.</p>
+          <details class="help-topic"><summary>Aging / Grading — scoring rules</summary><div class="help-body">
+            <p>Aging / Grading measures <b>current condition/risk</b>. It combines weighted recent Repair Cost, weighted Service Calls, and Total Hours. PM and rental expense are excluded from repair-cost grading; PM and rental-only records never count as service calls.</p>
+            <p><b>Repair weighting:</b> current year 100%, prior year 50%, two years prior 25%. Weighted Repair points: $0 = 0; $1–$1,499 = 1; $1,500–$2,999 = 2; $3,000–$5,999 = 3; $6,000+ = 4.</p>
+            <p><b>Service-call weighting:</b> current year 100%, prior year 75%, two years prior 50%, three years prior 10%. Weighted Service Call points: under 1.00 = 0; 1.00–2.99 = 1; 3.00–4.99 = 2; 5.00–6.99 = 3; 7.00+ = 4.</p>
             <p><b>Hours points:</b> under 2,500 = 0; 2,500–5,999 = 1; 6,000–8,999 = 2; 9,000–11,999 = 3; 12,000+ = 4.</p>
-            <p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–8 Watch; 9+ Replace Soon. Click the grade badge to see the score breakdown. Replace Soon is a management signal, not an automatic replacement order.</p>
-            <p><b>Lifetime Repair Spend does not add grade points.</b> It is management context. When Estimated Replacement Cost is entered for the forklift, lifetime repair spend is compared with it: under 50% = no flag; 50–99% = Elevated Lifetime Spend; 100%+ = High Lifetime Spend.</p>
-            <p>The Aging / Grading screen deliberately shows both <b>Current-Year Actual Repair Spend</b> and the <b>Weighted Repair Amount used for grading</b> so the real financial history is never confused with the scoring calculation.</p>
+            <p><b>Grades:</b> 0–3 Excellent; 4–6 Good; 7–8 Watch; 9+ Replace Soon. Replace Soon is a management signal, not an automatic replacement order.</p>
+            <p>Lifetime Repair Spend is context, not a score component. When Estimated Replacement Cost exists, lifetime repair spend under 50% has no lifetime flag; 50–99% = Elevated Lifetime Spend; 100%+ = High Lifetime Spend.</p>
+            <p>The screen shows both actual current-year repair spend and the weighted repair amount used for scoring so financial reality is never confused with the grading formula.</p>
           </div></details>
 
-          <details class="help-topic"><summary>Reports</summary><div class="help-body">
-            <p>Aging / Grading can export both Excel and a Leadership PDF. If a ROM filter is selected, the report respects that filter; otherwise it reports the full grading fleet.</p>
-            <p><b>Excel</b> is the detailed audit report. It includes current-year actual repair spend, weighted repair amount, weighted service calls, lifetime repair spend, estimated replacement cost and lifetime-spend flag, Major Life-Extending Repair totals, point components, grade, and annual history by year including each year's weighted contribution.</p>
-            <p><b>Leadership PDF</b> is the concise management view. It highlights Watch / Replace Soon units and shows the actual-versus-weighted repair context, weighted calls, lifetime repair spend, life-extending repair indicator, replacement-cost context, score, and grade.</p>
+          <details class="help-topic" id="rp-help-topic"><summary>Replacement Planning — suggested timing, rightsizing, and management plan</summary><div class="help-body">
+            <p><b>Replacement Planning is separate from Aging / Grading.</b> The grade measures condition/risk; Replacement Planning translates that evidence into capital timing. A management planning decision never changes the underlying grade.</p>
+            <p>The system considers weighted repairs, weighted service calls, hours/age, reliable rental/downtime burden, lifetime-spend context, historical reliability context, MLER performance, and the number of forklifts actually required at each workroom.</p>
+            <p>Workroom targets currently include Charlotte 2, Norcross 2, Houston 1, DFW 2, and Fredericksburg 1; other workrooms default to one unless separately configured. If a workroom has more forklifts than its target, a rightsizing removal can carry <b>$0 replacement capital</b>.</p>
+            <p>The automatic forecast is intentionally conservative: a maximum of <b>4 suggested replacement purchases per year</b>, using a <b>$9,000 fleet-average planning cost</b>. A unit-specific Estimated Replacement Cost remains visible for context but does not replace the planning assumption in the capital forecast.</p>
+            <p>Management can <b>Use Suggested Year, Plan Specific Year, Monitor / Defer, or mark No Replacement Needed</b>. Overrides require a planning note/reason and preserve Last Reviewed. Planned decisions are stored with the forklift and survive normal Fleet edits.</p>
+            <p>Parked units do not receive automatic replacement recommendations. Successful recent MLERs may defer timing; continuing repair/service activity after an MLER reduces the deferral benefit. Stale/missing hours lower planning confidence rather than making a lift appear healthier.</p>
+            <p>Replacement Planning includes fleet detail, leadership forecast, Excel export, and Leadership PDF.</p>
           </div></details>
 
-          <details class="help-topic"><summary>Lease Manager integration and workrooms</summary><div class="help-body">
-            <p>Current Workroom choices for operating forklifts are pulled from active Lease Manager locations. This keeps the forklift location list aligned with the property database and reduces spelling/location drift.</p>
-            <p>Parked units are still owned and physically located somewhere, so they remain tied to a current active workroom unless/until a later transfer or disposition workflow changes that history.</p>
+          <details class="help-topic"><summary>Reports and exports</summary><div class="help-body">
+            <p><b>Aging / Grading:</b> Excel provides detailed scoring/audit history; Leadership PDF provides a concise management view. ROM filtering is respected when selected.</p>
+            <p><b>Lifecycle History:</b> can be exported for the filtered history or for an individual forklift, including effective date, before/after state, source, void status, user metadata, notes, and disposition amount.</p>
+            <p><b>Forklift Budget:</b> Leadership PDF and Excel Detail report monthly 6022/6023 actuals, projections, remaining/risk status, and forecast drivers.</p>
+            <p><b>Replacement Planning:</b> Excel exports detailed planning plus forecast summary; Leadership PDF shows replacement years, purchase counts, planning capital, actions, priorities, and reasons.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>Lease Manager integration and active workrooms</summary><div class="help-body">
+            <p>Active workroom choices are pulled from Lease Manager to reduce spelling drift and keep the Forklift Manager aligned with the property database.</p>
+            <p>Active, Down for Repair, and Parked forklifts must normally be tied to an active Lease Manager location. Retired/Sold/Scrapped units may retain an inactive historical location.</p>
+            <p>The PM Schedule is stricter: it shows only Active/Down for Repair lifts whose current workroom is active. Historical service and financial records are not retroactively moved when a forklift transfers; lifecycle history determines the location that applied on the event date.</p>
+          </div></details>
+
+          <details class="help-topic"><summary>What updates automatically?</summary><div class="help-body">
+            <p>After a save/import, the app reloads live SharePoint data and recalculates dependent views. Examples include yearly/lifetime transaction totals, grading metrics, Budget actuals/forecast drivers, PM evidence and Next PM Due, and Replacement Planning analysis.</p>
+            <p>A new PM Service Event or a newly imported PM Transaction can move Last PM forward. New Hour Readings can change PM utilization/right-sizing, Aging / Grading hours points, and replacement-planning confidence. New repair/rental Transactions can change grading, budget actuals, and planning evidence.</p>
+            <p>Automatic recalculation does <b>not</b> mean every management choice is overwritten. Manual PM schedule confirmation, lifecycle state changes, MLER designation, Budget manual overrides, and Replacement Planning management decisions remain controlled actions.</p>
           </div></details>
 
           <details class="help-topic"><summary>Common warnings and what they mean</summary><div class="help-body">
-            <p><b>Lower Hours warning:</b> the new meter reading is below the existing reading. Continue only if the prior entry was wrong or the meter was replaced/reset.</p>
-            <p><b>Primary Vendor mismatch:</b> this service vendor differs from the forklift’s saved primary vendor. Choose whether the difference is temporary or the primary vendor should be updated.</p>
-            <p><b>Duplicate / Skip on NetSuite import:</b> a matching transaction already exists. Review it and normally leave it skipped.</p>
-            <p><b>Rental Cost Pending:</b> a rental was recorded but its cost/invoice still needs to be entered.</p>
-            <p><b>Frequency Missing:</b> PM Frequency is not set for that forklift, so the app cannot judge PM compliance.</p>
-            <p><b>Tracking Prevention / favicon 404 in Edge Console:</b> generally browser/privacy or missing tab-icon messages; they do not affect forklift records when the app otherwise loads and saves normally.</p>
+            <p><b>Lower Hours:</b> the proposed reading is below the current/prior meter. Continue only when the old reading is wrong or the meter was replaced/reset.</p>
+            <p><b>Primary Vendor mismatch:</b> the event vendor differs from the workroom's Primary Service Vendor. Decide whether it is a one-off vendor or a true workroom vendor change.</p>
+            <p><b>Duplicate / existing invoice:</b> the document or accounting line may already exist. Normally reconcile/skip rather than create a second expense.</p>
+            <p><b>Rental Cost Pending:</b> the rental exists operationally but final cost has not yet been completed/reconciled.</p>
+            <p><b>No PM History / Schedule Missing / Frequency Change Recommended:</b> these are PM Schedule review states, not Dashboard failures. Use the PM page to see the evidence and recommendation.</p>
+            <p><b>Lifecycle integrity warning:</b> current Fleet state conflicts with the latest non-void lifecycle history, a final disposed unit still has open operational items, or history exists after a final disposition. Review before changing records.</p>
+            <p><b>Tracking Prevention / favicon 404:</b> usually browser/privacy or missing tab-icon messages and not a data-save problem when the app otherwise loads/saves normally.</p>
           </div></details>
 
-          <details class="help-topic"><summary>What is not finished yet?</summary><div class="help-body">
-            <p><b>#5 Transfers / Status History</b> is the next major module. The current app now tracks repair cases and repair-case status history. The dedicated historical workflow for forklift transfers and overall fleet status changes is still to be designed and added.</p>
-            <p>The Help &amp; Training section should be updated after #5 so the final transfer, relocation, disposition, and status-history procedures are documented here too.</p>
+          <details class="help-topic"><summary>Recommended monthly operating routine</summary><div class="help-body">
+            <p><b>During the month:</b> open Repair Cases as problems are reported; upload PM/service documents as they arrive; record useful meter readings; manage rentals and lifecycle changes when they happen.</p>
+            <p><b>When NetSuite is available:</b> import the monthly file, review every document classification/match/exclusion, reconcile duplicates and 6023 rentals, then verify the Transactions view.</p>
+            <p><b>After accounting review:</b> review the PM Schedule for overdue/due-soon/frequency changes, review Forklift Budget and close the month when appropriate, then use Aging / Grading and Replacement Planning for management review.</p>
           </div></details>
         </div>
       </section>
