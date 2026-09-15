@@ -2606,16 +2606,21 @@ function reconFindBudget(wb,ym,code){
     for(let hr=0;hr<Math.min(rows.length,18);hr++){
       for(let c=0;c<(rows[hr]?.length||0);c++){
         if(reconNorm(rows[hr][c])!==month)continue;
-        let actualCol=-1,varCol=-1,flexCol=-1;
+        // The month-named column itself is the approved/original Budget.
+        // Actual and Variance sit immediately to its right; Flex Budget is a separate analytical value
+        // and must never overwrite the official monthly budget in Forklift Manager.
+        const budgetCol=c;let actualCol=-1,varCol=-1;
         for(let cc=c;cc<=Math.min(c+6,(rows[hr]?.length||1)-1);cc++){
-          const h=reconNorm(rows[hr][cc]);if(h==='actual')actualCol=cc;else if(h==='variance')varCol=cc;else if(h==='flex budget')flexCol=cc;
+          const h=reconNorm(rows[hr][cc]);if(h==='actual')actualCol=cc;else if(h==='variance')varCol=cc;
         }
         if(actualCol<0)continue;
         for(let r=hr+1;r<rows.length;r++){
           const label=rows[r].map(x=>String(x||'')).find(x=>new RegExp('^'+code+'\\s*-').test(x.trim()));if(!label)continue;
-          const actual=reconNum(rows[r][actualCol]),variance=varCol>=0?reconNum(rows[r][varCol]):null,direct=flexCol>=0?reconNum(rows[r][flexCol]):null;
-          let budget=direct,basis='Flex Budget';
-          if(budget==null&&actual!=null&&variance!=null){budget=actual-variance;basis='Derived from Actual − Variance';}
+          const actual=reconNum(rows[r][actualCol]),variance=varCol>=0?reconNum(rows[r][varCol]):null,directBudget=reconNum(rows[r][budgetCol]);
+          let budget=directBudget,basis='Approved Budget';
+          // Some workbooks contain formulas whose cached Budget value is unavailable to SheetJS.
+          // In that case Budget = Actual − Variance. Never substitute Flex Budget.
+          if(budget==null&&actual!=null&&variance!=null){budget=actual-variance;basis='Approved Budget (derived from Actual − Variance)';}
           if(budget!=null)return {budget,actual,variance,basis,sheet:name,label};
         }
       }
@@ -2765,7 +2770,7 @@ function reconInstallStyles(){if(document.getElementById('budget-recon-styles'))
 .budget-recon-file{font-size:11px;margin:10px 0 6px}.budget-recon-bad{color:var(--danger);font-weight:800}.budget-recon-table{width:100%;font-size:10px;border-collapse:collapse}.budget-recon-table th,.budget-recon-table td{padding:6px;border-bottom:1px solid var(--border);text-align:right;vertical-align:top}.budget-recon-table th:first-child,.budget-recon-table td:first-child{text-align:left}.budget-recon-action{display:flex;align-items:center;gap:8px;margin:9px 0;flex-wrap:wrap}.budget-recon-status{padding:9px 10px;border-radius:8px;margin-top:8px;font-size:11px}.budget-recon-status.ready{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}.budget-recon-status.not-ready{background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35)}.budget-recon-issues{margin-top:9px;font-size:10px}.budget-recon-issues summary{cursor:pointer;font-weight:700}.budget-recon-issues table{width:100%;border-collapse:collapse;margin-top:6px}.budget-recon-issues th,.budget-recon-issues td{padding:5px;border-bottom:1px solid var(--border);text-align:left}.budget-recon-issues td:nth-last-child(-n+3){text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>`);}
 function reconUpdateHelp(){
-  const topics=document.getElementById('help-topics');if(!topics)return;const old=document.getElementById('help-month-close-reconciliation');old?.remove();topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-month-close-reconciliation"><summary>Month-end budget close — completed budget reconciliation</summary><div class="help-body"><p><b>Normal month-end order:</b> first go to Transactions and complete/review the monthly NetSuite CSV import. Then go to Forklift Budget, select the month, and click <b>Close Month</b>.</p><p>Inside Close Month, confirm the transaction import and upload the <b>Completed Monthly Budget</b> workbook. The app reads the final 6022 Forklift Repair &amp; Maintenance and 6023 Forklift Rental accounting actuals, compares them to Forklift Manager Transactions, and also compares the completed month budget to the Budget records stored in SharePoint. If the workbook Flex Budget formula is unavailable but Actual and Variance are present, the app derives the completed budget as <b>Actual − Variance</b>.</p><p>If the completed budget differs from the app, use <b>Use Completed Budget for This Month</b> to update only that month’s 6022/6023 Budget records. Transaction differences are shown by invoice/reference so missing, extra, or amount-mismatched items can be corrected. <b>The month cannot be closed until both accounts’ budget and actual differences reconcile to zero.</b></p><p>After reconciliation, Close Month stores the normal forecast-at-close snapshot plus a reconciliation note identifying the completed workbook used. Late accounting transactions after close are still detected by Changed After Close.</p></div></details>`);
+  const topics=document.getElementById('help-topics');if(!topics)return;const old=document.getElementById('help-month-close-reconciliation');old?.remove();topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-month-close-reconciliation"><summary>Month-end budget close — completed budget reconciliation</summary><div class="help-body"><p><b>Normal month-end order:</b> first go to Transactions and complete/review the monthly NetSuite CSV import. Then go to Forklift Budget, select the month, and click <b>Close Month</b>.</p><p>Inside Close Month, confirm the transaction import and upload the <b>Completed Monthly Budget</b> workbook. The app reads the final 6022 Forklift Repair &amp; Maintenance and 6023 Forklift Rental accounting actuals, compares them to Forklift Manager Transactions, and also compares the completed month budget to the Budget records stored in SharePoint. The app uses the month's <b>approved Budget</b> column for the official budget comparison. <b>Flex Budget is supporting context only and is never used to overwrite Forklift Manager budget records.</b> If the approved Budget formula value is unavailable but Actual and Variance are present, the app derives the approved budget as <b>Actual − Variance</b>.</p><p>If the completed budget differs from the app, use <b>Use Completed Budget for This Month</b> to update only that month’s 6022/6023 Budget records. Transaction differences are shown by invoice/reference so missing, extra, or amount-mismatched items can be corrected. <b>The month cannot be closed until both accounts’ budget and actual differences reconcile to zero.</b></p><p>After reconciliation, Close Month stores the normal forecast-at-close snapshot plus a reconciliation note identifying the completed workbook used. Late accounting transactions after close are still detected by Changed After Close.</p></div></details>`);
 }
 reconInstallStyles();reconInstallUI();reconUpdateHelp();reconUpdateCloseButton();
 })();
