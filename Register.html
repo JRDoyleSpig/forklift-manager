@@ -2997,5 +2997,101 @@ finStyles();finUpdateHelp();
   window.budgetReconHandleFile=budgetReconHandleFile;
 })();
 </script>
+
+<script>
+/* ── MONTH CLOSE AUTO-SUPERSEDE FIX v3 ─────────────────────────────────
+   Reconciliation-driven resolver. The completed month workbook is the final
+   control total. When an invoice is over in Forklift Manager by exactly the
+   amount of an earlier upload-created row, supersede that provisional row.
+   This deliberately matches by invoice/reference first so vendor naming and
+   account-classification differences cannot block a valid month-end match.
+*/
+(function(){
+  const TAG=/\[\[FIN_SUPERSEDED:([^\]]+)\]\]/i;
+  const ref=v=>String(v||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const month=v=>{const s=String(v||'').trim();let m=s.match(/^(\d{4})-(\d{2})/);if(m)return `${m[1]}-${m[2]}`;m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${String(m[1]).padStart(2,'0')}`:s.slice(0,7);};
+  const cents=v=>Math.round(Number(v||0)*100);
+  function superseded(t){return TAG.test(String(t?.notes||''));}
+  function provisional(t){
+    if(!t||superseded(t))return false;
+    const id=String(t.transactionId||'').trim().toUpperCase();
+    const txt=[t.description,t.notes].join(' ');
+    // NetSuite/HIST rows are accounting authority and are never superseded.
+    if(/^(NS-|NSR-|HIST-)/.test(id))return false;
+    if(/NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(txt))return false;
+    return /^(DOC-|PMUP-|SVCUP-|RUP-)/.test(id)||/uploaded (?:PM |service )?document|uploaded through Service \/ Hours|Repair Case ID\s*:|Service Event ID\s*:/i.test(txt);
+  }
+  function exactSubset(rows,target){
+    const a=rows.filter(x=>cents(x.amount)!==0).slice(0,20),want=Math.abs(target);let answer=null;
+    function walk(i,sum,pick){
+      if(answer)return;
+      if(Math.abs(sum)===want){answer=pick.slice();return;}
+      if(i>=a.length)return;
+      walk(i+1,sum,pick);
+      pick.push(a[i]);walk(i+1,sum+cents(a[i].amount),pick);pick.pop();
+    }
+    walk(0,0,[]);return answer||[];
+  }
+  function candidates(){
+    const r=budgetCloseRecon;if(!r||!Array.isArray(r.issues))return[];
+    const out=[],seen=new Set(),ym=budgetSelectedMonth;
+    for(const issue of r.issues){
+      const d=Number(issue.difference||0);
+      if(d<=0.005||!issue.reference)continue; // only remove Manager extras
+      const rr=ref(issue.reference);
+      // Reference + selected month + provisional source is sufficient. Do not
+      // require vendor/account text to match because those are exactly the
+      // fields that often differ between work-order uploads and NetSuite.
+      const pool=transactions.filter(t=>month(t.transactionDate)===ym&&ref(t.invoiceNumber)===rr&&provisional(t));
+      if(!pool.length)continue;
+      let pick=[];
+      const total=pool.reduce((s,t)=>s+cents(t.amount),0);
+      if(Math.abs(total-cents(d))<=1)pick=pool;
+      else pick=exactSubset(pool,cents(d));
+      for(const t of pick){const k=String(t.spId);if(!seen.has(k)){seen.add(k);out.push({t,issue});}}
+    }
+    return out;
+  }
+  async function persist(rows,fileName){
+    if(!rows.length)return 0;
+    const token=await getToken(),et=await listEntityType(token,TX_LIST_API),nf=txFieldMap[normalizeLabel('Notes')];
+    if(!nf)throw new Error('Forklift Transactions is missing the Notes field needed for financial supersession.');
+    let n=0;
+    for(const {t,issue} of rows){
+      const payload=encodeURIComponent(JSON.stringify({v:3,month:budgetSelectedMonth,file:fileName||'',reference:t.invoiceNumber||issue.reference||'',reason:'Month-end completed budget reconciled to NetSuite detail; earlier upload-created financial row superseded',workbookAmount:Number(issue.workbook||0),difference:Number(issue.difference||0),at:new Date().toISOString()}));
+      const old=String(t.notes||'').trim(),nn=old+(old?' | ':'')+'[[FIN_SUPERSEDED:'+payload+']]',body={__metadata:{type:et}};body[nf]=nn;
+      const resp=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+      if(!resp.ok)throw new Error(`Could not supersede ${t.transactionId||t.spId}: ${await resp.text()}`);
+      t.notes=nn;n++;
+    }
+    return n;
+  }
+
+  const base=budgetReconHandleFile;
+  budgetReconHandleFile=async function(file){
+    await base(file);
+    if(!file||!budgetCloseRecon)return;
+    const rows=candidates();
+    if(!rows.length)return;
+    const status=document.getElementById('budget-close-reconcile-status');
+    try{
+      if(status)status.textContent=`Auto-resolving ${rows.length} provisional duplicate${rows.length===1?'':'s'}…`;
+      const n=await persist(rows,file.name);
+      if(n){
+        // Re-run the full established parser/reconciliation after the markers
+        // are present locally and in SharePoint.
+        await base(file);
+        if(status)status.textContent=`Workbook loaded · ${n} provisional duplicate${n===1?'':'s'} auto-resolved`;
+      }
+    }catch(e){
+      console.error(e);
+      if(status)status.textContent='Workbook loaded · automatic duplicate resolution failed';
+      const el=document.getElementById('budget-close-reconcile-results');
+      if(el)el.insertAdjacentHTML('beforeend',`<div class="budget-recon-error"><b>Automatic duplicate resolution failed.</b><br>${esc(e.message)}</div>`);
+    }
+  };
+  window.budgetReconHandleFile=budgetReconHandleFile;
+})();
+</script>
 </body>
 </html>
