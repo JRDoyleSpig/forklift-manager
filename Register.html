@@ -2626,10 +2626,47 @@ function reconFindBudget(wb,ym,code){
 function reconGroupWorkbook(lines){
   const m=new Map();for(const l of lines){const key=`${l.account}|${reconRef(l.reference)||('NOREF'+l.vendor+l.memo)}`;const g=m.get(key)||{account:l.account,reference:l.reference,vendor:l.vendor,memo:l.memo,amount:0,count:0};g.amount+=l.amount;g.count++;m.set(key,g);}return [...m.values()];
 }
+function reconFinIsSuperseded(t){return /\[\[FIN_SUPERSEDED:([^\]]+)\]\]/i.test(String(t?.notes||''));}
+function reconFinAccount(t){if(!t)return'';if(isRentalTx(t))return'6023';return /fuel|baler|pole only/i.test(String(t.category||'')+' '+String(t.description||''))?'':'6022';}
+function reconFinMonth(v){const x=String(v||'').trim();let m=x.match(/^(\d{4})-(\d{2})/);if(m)return `${m[1]}-${m[2]}`;m=x.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${String(m[1]).padStart(2,'0')}`:x.slice(0,7);}
+function reconFinAccounting(t){const id=String(t?.transactionId||'').trim().toUpperCase(),txt=[t?.description,t?.notes].join(' ');return /^(NS-|NSR-|HIST-)/.test(id)||/NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(txt);}
+function reconFinProvisional(t){if(!t||reconFinIsSuperseded(t)||reconFinAccounting(t))return false;const id=String(t.transactionId||'').trim().toUpperCase(),txt=[t.description,t.notes].join(' ');return /^(DOC-|PMUP-|SVCUP-|RUP-)/.test(id)||/uploaded (?:PM |service )?document|uploaded through Service \/ Hours|Repair Case ID\s*:|Service Event ID\s*:/i.test(txt);}
+function reconFinCents(v){return Math.round(Number(v||0)*100);}
+function reconFinSubset(rows,targetCents){const a=rows.filter(t=>reconFinCents(t.amount)!==0).slice(0,20),want=Math.abs(targetCents);let found=null;function walk(i,sum,pick){if(found)return;if(Math.abs(sum)===want){found=pick.slice();return;}if(i>=a.length)return;walk(i+1,sum,pick);pick.push(a[i]);walk(i+1,sum+reconFinCents(a[i].amount),pick);pick.pop();}walk(0,0,[]);return found||[];}
 function reconAppGroups(ym){
   const m=new Map();
-  for(const t of transactions){if(String(t.transactionDate||'').slice(0,7)!==ym)continue;const account=isRentalTx(t)?'6023':(!(/fuel|baler|pole only/i.test(String(t.category||'')+' '+String(t.description||'')))?'6022':'');if(!account)continue;const ref=String(t.invoiceNumber||'').trim(),key=`${account}|${reconRef(ref)||('NOREF'+String(t.transactionId||t.spId||''))}`,g=m.get(key)||{account,reference:ref,vendor:t.vendor||'',memo:t.description||'',amount:0,count:0};g.amount+=Number(t.amount||0);g.count++;m.set(key,g);}
+  for(const t of transactions){if(reconFinIsSuperseded(t)||reconFinMonth(t.transactionDate)!==ym)continue;const account=reconFinAccount(t);if(!account)continue;const ref=String(t.invoiceNumber||'').trim(),key=`${account}|${reconRef(ref)||('NOREF'+String(t.transactionId||t.spId||''))}`,g=m.get(key)||{account,reference:ref,vendor:t.vendor||'',memo:t.description||'',amount:0,count:0};g.amount+=Number(t.amount||0);g.count++;m.set(key,g);}
   return [...m.values()];
+}
+function reconAutoCandidates(issues,ym){
+  const out=[],seen=new Set();
+  for(const issue of issues||[]){
+    const diff=Number(issue.difference||0);if(diff<=reconTolerance||!issue.reference)continue;
+    const rr=reconRef(issue.reference),acct=String(issue.account||'');
+    const auth=transactions.filter(t=>!reconFinIsSuperseded(t)&&reconFinMonth(t.transactionDate)===ym&&reconRef(t.invoiceNumber)===rr&&reconFinAccount(t)===acct&&reconFinAccounting(t));
+    const authTotal=auth.reduce((s,t)=>s+Number(t.amount||0),0);
+    if(!auth.length||Math.abs(authTotal-Number(issue.workbook||0))>reconTolerance)continue;
+    const pool=transactions.filter(t=>!reconFinIsSuperseded(t)&&reconFinMonth(t.transactionDate)===ym&&reconRef(t.invoiceNumber)===rr&&reconFinProvisional(t));
+    if(!pool.length)continue;
+    const total=pool.reduce((s,t)=>s+reconFinCents(t.amount),0),target=reconFinCents(diff);
+    const picked=Math.abs(total-target)<=1?pool:reconFinSubset(pool,target);
+    for(const t of picked){const k=String(t.spId||t.transactionId);if(!seen.has(k)){seen.add(k);out.push({t,issue});}}
+  }
+  return out;
+}
+async function reconPersistAutoSuperseded(rows,fileName){
+  if(!rows.length)return[];
+  const token=await getToken(),et=await listEntityType(token,TX_LIST_API),nf=txFieldMap[normalizeLabel('Notes')];
+  if(!nf)throw new Error('Forklift Transactions is missing the Notes field needed for automatic financial reconciliation.');
+  const done=[];
+  for(const {t,issue} of rows){
+    const payload=encodeURIComponent(JSON.stringify({v:4,month:budgetSelectedMonth,file:fileName||'',reference:t.invoiceNumber||issue.reference||'',reason:'Completed monthly budget matched NetSuite accounting detail; earlier upload-created financial row automatically superseded',workbookAmount:Number(issue.workbook||0),difference:Number(issue.difference||0),at:new Date().toISOString()}));
+    const old=String(t.notes||'').trim(),nn=old+(old?' | ':'')+'[[FIN_SUPERSEDED:'+payload+']]',body={__metadata:{type:et}};body[nf]=nn;
+    const resp=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+    if(!resp.ok)throw new Error(`Could not supersede ${t.transactionId||t.spId}: ${await resp.text()}`);
+    t.notes=nn;done.push(t);
+  }
+  return done;
 }
 function reconLineCompare(workbookGroups,appGroups){
   const app=new Map(appGroups.map(g=>[`${g.account}|${reconRef(g.reference)}`,g])),workbook=new Map(workbookGroups.map(g=>[`${g.account}|${reconRef(g.reference)}`,g]));
@@ -2657,6 +2694,8 @@ function reconRender(){
   ${(!bok22||!bok23)?'<div class="budget-recon-action"><button class="btn primary" onclick="budgetReconApplyCompletedBudget()">Use Completed Budget for This Month</button><span class="muted">Updates only the selected month\'s 6022/6023 budget records in SharePoint.</span></div>':''}
   <div class="budget-recon-status ${reconReady()?'ready':'not-ready'}">${reconReady()?'<b>Reconciled — ready to close.</b> Budget and accounting actuals match the completed workbook.':'<b>Not ready to close.</b> Resolve the highlighted differences first.'}</div>
   ${issues.length?`<details class="budget-recon-issues" open><summary>${issues.length} transaction reconciliation issue${issues.length===1?'':'s'}</summary><div style="overflow:auto;max-height:210px"><table><thead><tr><th>Issue</th><th>Acct</th><th>Reference</th><th>Vendor</th><th>Completed Actual</th><th>Manager</th><th>Difference</th></tr></thead><tbody>${issues.slice(0,40).map(i=>`<tr><td>${esc(i.side)}</td><td>${i.account}</td><td>${esc(i.reference||'—')}</td><td>${esc(i.vendor||'—')}</td><td>${reconMoney(i.workbook)}</td><td>${reconMoney(i.manager)}</td><td>${reconMoney(i.difference)}</td></tr>`).join('')}</tbody></table></div>${issues.length>40?`<div class="muted">Showing first 40 of ${issues.length} issues.</div>`:''}</details>`:''}`;
+  if(r.autoSuperseded?.length){const total=r.autoSuperseded.reduce((s,t)=>s+Number(t.amount||0),0);el.insertAdjacentHTML('beforeend',`<div class="budget-recon-auto"><b>Automatically reconciled ${r.autoSuperseded.length} provisional transaction${r.autoSuperseded.length===1?'':'s'} (${reconMoney(total)})</b><div class="muted" style="margin-top:3px">The completed budget matched the NetSuite accounting detail, so the earlier upload-created financial row${r.autoSuperseded.length===1?' was':'s were'} retained for audit but removed from financial totals.</div><details style="margin-top:6px"><summary>Show automatically superseded rows</summary><table><thead><tr><th>Reference</th><th>Forklift</th><th>Transaction</th><th>Amount</th></tr></thead><tbody>${r.autoSuperseded.map(t=>`<tr><td>${esc(t.invoiceNumber||'—')}</td><td>${esc(t.forkliftId||'—')}</td><td>${esc(t.transactionId||String(t.spId))}</td><td>${reconMoney(t.amount)}</td></tr>`).join('')}</tbody></table></details></div>`);}
+  if(r.autoError)el.insertAdjacentHTML('beforeend',`<div class="budget-recon-error"><b>Automatic duplicate reconciliation failed.</b><br>${esc(r.autoError)}</div>`);
   reconUpdateCloseButton();
 }
 async function budgetReconHandleFile(file){
@@ -2667,10 +2706,22 @@ async function budgetReconHandleFile(file){
     const detected=reconWorkbookMonth(lines)||budgetSelectedMonth;if(detected!==budgetSelectedMonth)throw new Error(`This workbook appears to be for ${budgetMonthLabel(detected)}, but ${budgetMonthLabel(budgetSelectedMonth)} is selected.`);
     const b22=reconFindBudget(wb,budgetSelectedMonth,'6022'),b23=reconFindBudget(wb,budgetSelectedMonth,'6023');if(!b22||!b23)throw new Error('Could not locate the completed 6022/6023 budget values in the workbook.');
     const workbookActual22=lines.filter(x=>x.account==='6022').reduce((s,x)=>s+x.amount,0),workbookActual23=lines.filter(x=>x.account==='6023').reduce((s,x)=>s+x.amount,0),x=budgetSummary(budgetSelectedMonth),wg=reconGroupWorkbook(lines),ag=reconAppGroups(budgetSelectedMonth),issues=reconLineCompare(wg,ag);
-    budgetCloseRecon={fileName:file.name,month:detected,actualsFound:true,budgetsFound:true,workbookActual22,workbookActual23,appActual22:x.a22,appActual23:x.a23,diff22:x.a22-workbookActual22,diff23:x.a23-workbookActual23,budget22:b22.budget,budget23:b23.budget,budgetBasis22:b22.basis,budgetBasis23:b23.basis,appBudget22:x.b22.amount,appBudget23:x.b23.amount,budgetDiff22:x.b22.amount-b22.budget,budgetDiff23:x.b23.amount-b23.budget,issues,lines};
-    if(status)status.textContent='Workbook loaded';reconRender();
+    budgetCloseRecon={fileName:file.name,month:detected,actualsFound:true,budgetsFound:true,workbookActual22,workbookActual23,appActual22:x.a22,appActual23:x.a23,diff22:x.a22-workbookActual22,diff23:x.a23-workbookActual23,budget22:b22.budget,budget23:b23.budget,budgetBasis22:b22.basis,budgetBasis23:b23.basis,appBudget22:x.b22.amount,appBudget23:x.b23.amount,budgetDiff22:x.b22.amount-b22.budget,budgetDiff23:x.b23.amount-b23.budget,issues,lines,autoSuperseded:[],autoError:''};
+    // Resolve Manager-only overages when NetSuite detail already equals the completed workbook.
+    try{
+      const candidates=reconAutoCandidates(budgetCloseRecon.issues,budgetSelectedMonth);
+      if(candidates.length){
+        if(status)status.textContent=`Auto-reconciling ${candidates.length} provisional duplicate${candidates.length===1?'':'s'}…`;
+        budgetCloseRecon.autoSuperseded=await reconPersistAutoSuperseded(candidates,file.name);
+        const x2=budgetSummary(budgetSelectedMonth),ag2=reconAppGroups(budgetSelectedMonth);
+        budgetCloseRecon.appActual22=x2.a22;budgetCloseRecon.appActual23=x2.a23;budgetCloseRecon.diff22=x2.a22-workbookActual22;budgetCloseRecon.diff23=x2.a23-workbookActual23;budgetCloseRecon.issues=reconLineCompare(wg,ag2);
+      }
+    }catch(autoErr){console.error(autoErr);budgetCloseRecon.autoError=autoErr.message||String(autoErr);}
+    if(status)status.textContent=budgetCloseRecon.autoSuperseded.length?`Workbook loaded · ${budgetCloseRecon.autoSuperseded.length} provisional duplicate${budgetCloseRecon.autoSuperseded.length===1?'':'s'} auto-reconciled`:'Workbook loaded';
+    reconRender();renderBudget();
   }catch(e){console.error(e);budgetCloseRecon=null;if(status)status.textContent='Could not reconcile';const el=document.getElementById('budget-close-reconcile-results');if(el)el.innerHTML=`<div class="budget-recon-error"><b>Could not use this workbook.</b><br>${esc(e.message)}</div>`;reconUpdateCloseButton();}
 }
+window.__budgetReconCoreHandleFile=budgetReconHandleFile;
 window.budgetReconHandleFile=budgetReconHandleFile;
 window.budgetReconApplyCompletedBudget=async function(){
   if(!budgetCloseRecon)return;const r=budgetCloseRecon,p=budgetYMParts(budgetSelectedMonth);if(!confirm(`Update ${budgetMonthLabel(budgetSelectedMonth)} budget to the completed workbook values?\n\n6022: ${reconMoney(r.budget22)}\n6023: ${reconMoney(r.budget23)}`))return;
@@ -3092,6 +3143,11 @@ finStyles();finUpdateHelp();
   };
   window.budgetReconHandleFile=budgetReconHandleFile;
 })();
+</script>
+
+<script>
+/* Final month-close handler binding: use the closure-safe reconciliation handler. */
+if(window.__budgetReconCoreHandleFile)window.budgetReconHandleFile=window.__budgetReconCoreHandleFile;
 </script>
 </body>
 </html>
