@@ -2720,5 +2720,170 @@ reconInstallStyles();reconInstallUI();reconUpdateHelp();reconUpdateCloseButton()
 })();
 
 </script>
+
+
+<script>
+/* ── MONTH CLOSE: ACCOUNTING AUTHORITY / AUTO-SUPERSEDE ─────────────────
+   Financial source hierarchy:
+   1) Completed monthly budget workbook = final control total.
+   2) Monthly NetSuite import = authoritative transaction detail.
+   3) Earlier Service / Hours / Repair Case financial rows = provisional.
+   When the NetSuite detail for an invoice exactly matches the completed
+   workbook, matching provisional rows are automatically retained for audit
+   but excluded from financial totals. No transaction is deleted.
+*/
+(function(){
+const FIN_SUP_TAG=/\[\[FIN_SUPERSEDED:([^\]]+)\]\]/i;
+const FIN_SUP_PREFIX='[[FIN_SUPERSEDED:';
+
+function finIsSuperseded(t){return FIN_SUP_TAG.test(String(t?.notes||''));}
+function finAccount(t){
+  if(!t)return'';
+  if(isRentalTx(t))return'6023';
+  const txt=String(t.category||'')+' '+String(t.description||'');
+  if(/fuel|baler|pole only/i.test(txt))return'';
+  return'6022';
+}
+function finIsAccountingAuthority(t){
+  const id=String(t?.transactionId||'').trim().toUpperCase();
+  if(/^(NS-|NSR-|HIST-)/.test(id))return true;
+  const s=[t?.description,t?.notes].join(' ');
+  return /NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(s);
+}
+function finIsProvisional(t){
+  if(!t||finIsAccountingAuthority(t))return false;
+  const id=String(t.transactionId||'').trim().toUpperCase();
+  const s=[t.description,t.notes].join(' ');
+  return /^(DOC-|PMUP-|SVCUP-|RUP-)/.test(id)||/uploaded (?:PM |service )?document|uploaded through Service \/ Hours|Repair Case ID\s*:|Service Event ID\s*:/i.test(s);
+}
+function finActive(t){return !finIsSuperseded(t);}
+function finSum(rows){return Number(rows.reduce((s,t)=>s+Number(t.amount||0),0).toFixed(2));}
+function finSameRef(t,account,ref,ym){return finAccount(t)===account&&String(t.transactionDate||'').slice(0,7)===ym&&reconRef(t.invoiceNumber)===reconRef(ref);}
+function finMarkerPayload(t,ym,fileName,workbookAmount){
+  return encodeURIComponent(JSON.stringify({v:1,month:ym,file:fileName,reference:t.invoiceNumber||'',reason:'Superseded by NetSuite detail reconciled to completed monthly budget',workbookAmount:Number(workbookAmount||0),at:new Date().toISOString()}));
+}
+function finWithMarker(notes,payload){const s=String(notes||'').trim();return s+(s?' | ':'')+FIN_SUP_PREFIX+payload+']]';}
+
+// Core financial metrics must ignore superseded provisional rows.
+const finBaseTxForForklift=txForForklift;
+txForForklift=function(fid){return finBaseTxForForklift(fid).filter(finActive);};
+
+budgetMonthActual=function(ym,account){return transactions.filter(t=>finActive(t)&&String(t.transactionDate||'').startsWith(ym)&&(account===BUDGET_ACCOUNT_6023?isRentalTx(t):(!isRentalTx(t)&&!(/fuel|baler|pole only/i.test(String(t.category||'')+' '+String(t.description||'')))))).reduce((s,t)=>s+Number(t.amount||0),0);};
+
+reconAppGroups=function(ym){
+  const m=new Map();
+  for(const t of transactions){
+    if(!finActive(t)||String(t.transactionDate||'').slice(0,7)!==ym)continue;
+    const account=finAccount(t);if(!account)continue;
+    const ref=String(t.invoiceNumber||'').trim(),key=`${account}|${reconRef(ref)||('NOREF'+String(t.transactionId||t.spId||''))}`;
+    const g=m.get(key)||{account,reference:ref,vendor:t.vendor||'',memo:t.description||'',amount:0,count:0};
+    g.amount+=Number(t.amount||0);g.count++;m.set(key,g);
+  }
+  return [...m.values()];
+};
+
+// Keep the Budget detail table/exports aligned with financial-active rows,
+// while Transactions itself still shows the original audit trail.
+const finBaseRenderBudget=renderBudget;
+renderBudget=function(){const all=transactions;transactions=all.filter(finActive);try{return finBaseRenderBudget();}finally{transactions=all;}};
+
+budgetExportRows=function(ym){
+  const x=budgetSummary(ym),actual=transactions.filter(t=>finActive(t)&&String(t.transactionDate||'').startsWith(ym)).map(t=>({'Month':ym,'Record Type':'Accounting Actual','Account':isRentalTx(t)?'6023':'6022','Forklift ID':t.forkliftId,'Workroom':t.workroom,'Vendor':t.vendor,'Reference':t.invoiceNumber,'Amount':Number(t.amount||0),'Confidence':'Actual','Basis':'Forklift Transactions'})),fc=x.drivers.map(r=>({'Month':ym,'Record Type':r.type,'Account':r.account.startsWith('6023')?'6023':'6022','Forklift ID':r.forkliftId,'Workroom':r.workroom,'Vendor':r.vendor,'Reference':r.sourceId,'Amount':r.amount,'Confidence':r.confidence,'Basis':r.basis}));return [...actual,...fc];
+};
+
+if(typeof nsExistingForDoc==='function'){
+  const finBaseNsExistingForDoc=nsExistingForDoc;
+  nsExistingForDoc=function(g){return finBaseNsExistingForDoc(g).filter(finActive);};
+}
+
+function finAutoCandidates(lines,ym){
+  const out=[];
+  for(const w of reconGroupWorkbook(lines)){
+    if(!w.reference)continue;
+    const rows=transactions.filter(t=>finActive(t)&&finSameRef(t,w.account,w.reference,ym));
+    const accounting=rows.filter(finIsAccountingAuthority),provisional=rows.filter(finIsProvisional);
+    if(!accounting.length||!provisional.length)continue;
+    const acctSum=finSum(accounting);
+    if(Math.abs(acctSum-Number(w.amount||0))<=reconTolerance){
+      for(const t of provisional){if(Math.abs(Number(t.amount||0))>reconTolerance)out.push({t,account:w.account,reference:w.reference,workbookAmount:Number(w.amount||0),accountingAmount:acctSum});}
+    }
+  }
+  const seen=new Set();return out.filter(x=>{const k=String(x.t.spId);if(seen.has(k))return false;seen.add(k);return true;});
+}
+function finRelevantSuperseded(lines,ym){
+  const keys=new Set(reconGroupWorkbook(lines).filter(g=>g.reference).map(g=>`${g.account}|${reconRef(g.reference)}`));
+  return transactions.filter(t=>finIsSuperseded(t)&&String(t.transactionDate||'').slice(0,7)===ym&&keys.has(`${finAccount(t)}|${reconRef(t.invoiceNumber)}`));
+}
+async function finPersistSuperseded(candidates,ym,fileName){
+  if(!candidates.length)return[];
+  const token=await getToken(),et=await listEntityType(token,TX_LIST_API),notesField=txFieldMap[normalizeLabel('Notes')];
+  if(!notesField)throw new Error('Forklift Transactions is missing the Notes field needed to preserve auto-supersede audit history.');
+  const done=[];
+  for(const c of candidates){
+    const t=c.t,payload=finMarkerPayload(t,ym,fileName,c.workbookAmount),newNotes=finWithMarker(t.notes,payload),body={__metadata:{type:et}};body[notesField]=newNotes;
+    const resp=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+    if(!resp.ok)throw new Error(`Could not supersede ${t.transactionId||t.spId}: ${await resp.text()}`);
+    t.notes=newNotes;done.push(t);
+  }
+  return done;
+}
+function finRefreshRecon(){
+  const r=budgetCloseRecon;if(!r)return;
+  const x=budgetSummary(budgetSelectedMonth),wg=reconGroupWorkbook(r.lines),ag=reconAppGroups(budgetSelectedMonth);
+  r.appActual22=x.a22;r.appActual23=x.a23;r.diff22=x.a22-r.workbookActual22;r.diff23=x.a23-r.workbookActual23;r.issues=reconLineCompare(wg,ag);
+  r.superseded=finRelevantSuperseded(r.lines,budgetSelectedMonth);
+}
+
+const finBaseReconRender=reconRender;
+reconRender=function(){
+  finBaseReconRender();
+  const r=budgetCloseRecon,el=document.getElementById('budget-close-reconcile-results');if(!r||!el)return;
+  const rows=r.superseded||[];if(!rows.length)return;
+  const total=finSum(rows);
+  const box=document.createElement('div');box.className='budget-recon-auto';
+  box.innerHTML=`<b>Automatically reconciled ${rows.length} provisional transaction${rows.length===1?'':'s'} (${reconMoney(total)})</b><div class="muted" style="margin-top:3px">NetSuite accounting detail matched the completed monthly budget, so earlier upload-created financial rows were retained for audit but removed from financial totals.</div><details style="margin-top:6px"><summary>Show superseded transactions</summary><table><thead><tr><th>Reference</th><th>Forklift</th><th>Source Row</th><th>Amount</th></tr></thead><tbody>${rows.map(t=>`<tr><td>${esc(t.invoiceNumber||'—')}</td><td>${esc(t.forkliftId||'—')}</td><td>${esc(t.transactionId||String(t.spId))}</td><td>${reconMoney(t.amount)}</td></tr>`).join('')}</tbody></table></details>`;
+  const status=el.querySelector('.budget-recon-status');if(status)status.insertAdjacentElement('beforebegin',box);else el.appendChild(box);
+};
+
+const finBaseBudgetReconHandleFile=budgetReconHandleFile;
+budgetReconHandleFile=async function(file){
+  await finBaseBudgetReconHandleFile(file);
+  if(!budgetCloseRecon||!file)return;
+  const status=document.getElementById('budget-close-reconcile-status');
+  try{
+    const candidates=finAutoCandidates(budgetCloseRecon.lines,budgetSelectedMonth);
+    if(candidates.length){
+      if(status)status.textContent=`Reconciling ${candidates.length} provisional transaction${candidates.length===1?'':'s'}…`;
+      await finPersistSuperseded(candidates,budgetSelectedMonth,file.name);
+      if(status)status.textContent='Workbook loaded · provisional duplicates reconciled';
+    }
+    finRefreshRecon();reconRender();renderBudget();reconUpdateCloseButton();
+  }catch(e){
+    console.error(e);if(status)status.textContent='Workbook loaded · automatic reconciliation needs review';
+    const el=document.getElementById('budget-close-reconcile-results');if(el)el.insertAdjacentHTML('beforeend',`<div class="budget-recon-error"><b>Automatic provisional-transaction reconciliation failed.</b><br>${esc(e.message)}</div>`);
+    reconUpdateCloseButton();
+  }
+};
+window.budgetReconHandleFile=budgetReconHandleFile;
+
+// Add a visible audit cue in the Transactions table without hiding the row.
+const finBaseRenderTransactions=renderTransactions;
+renderTransactions=function(){
+  finBaseRenderTransactions();
+  document.querySelectorAll('#transactions-table tbody tr').forEach(tr=>{
+    const txt=tr.textContent||'';const t=transactions.find(x=>x.transactionId&&txt.includes(x.transactionId));
+    if(t&&finIsSuperseded(t)){tr.style.opacity='.58';tr.title='Financially superseded at month-end; retained for audit and excluded from spend/budget totals.';}
+  });
+};
+
+function finUpdateHelp(){
+  const h=document.getElementById('help-month-close-reconciliation')?.querySelector('.help-body');if(!h||h.querySelector('.fin-auto-sup-help'))return;
+  h.insertAdjacentHTML('beforeend',`<p class="fin-auto-sup-help"><b>Accounting authority and automatic supersession:</b> the completed monthly budget is the final control total and the monthly NetSuite import is the authoritative transaction detail. If an invoice already has an earlier financial row created from a PM/service document or repair-case workflow, and the NetSuite lines for that invoice exactly match the completed workbook, the app automatically marks the earlier row <b>Financially Superseded</b>. The row is never deleted; it remains as an audit link to the service document/event but is excluded from Budget actuals, repair/lifetime spend, Aging / Grading, and other financial totals. If the NetSuite detail does not exactly match the completed workbook, nothing is auto-superseded and the difference remains for review.</p>`);
+}
+function finStyles(){if(document.getElementById('fin-sup-styles'))return;document.head.insertAdjacentHTML('beforeend',`<style id="fin-sup-styles">.budget-recon-auto{margin-top:9px;padding:9px 10px;border-radius:8px;background:rgba(34,197,94,.09);border:1px solid rgba(34,197,94,.3);font-size:10px}.budget-recon-auto table{width:100%;border-collapse:collapse;margin-top:5px}.budget-recon-auto th,.budget-recon-auto td{padding:4px;border-bottom:1px solid var(--border);text-align:left}.budget-recon-auto th:last-child,.budget-recon-auto td:last-child{text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>`);}
+finStyles();finUpdateHelp();
+})();
+</script>
+
 </body>
 </html>
