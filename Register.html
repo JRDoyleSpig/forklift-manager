@@ -2885,5 +2885,117 @@ finStyles();finUpdateHelp();
 })();
 </script>
 
+
+<script>
+/* ── MONTH CLOSE AUTO-SUPERSEDE FIX v2 ─────────────────────────────────
+   Second-pass resolver driven by the reconciliation result itself.
+   If Manager Actual exceeds the completed workbook for an invoice by an
+   amount exactly represented by one or more provisional upload-created rows,
+   those provisional rows are financially superseded automatically.
+*/
+(function(){
+  const FIN2_TAG=/\[\[FIN_SUPERSEDED:([^\]]+)\]\]/i;
+  function fin2Superseded(t){return FIN2_TAG.test(String(t?.notes||''));}
+  function fin2Ref(v){return String(v||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');}
+  function fin2Acct(t){
+    if(!t)return'';
+    if(typeof isRentalTx==='function'&&isRentalTx(t))return'6023';
+    const txt=String(t.category||'')+' '+String(t.description||'');
+    if(/fuel|baler|pole only/i.test(txt))return'';
+    return'6022';
+  }
+  function fin2Provisional(t){
+    if(!t||fin2Superseded(t))return false;
+    const id=String(t.transactionId||'').trim().toUpperCase();
+    const txt=[t.description,t.notes].join(' ');
+    if(/^(NS-|NSR-|HIST-)/.test(id))return false;
+    if(/NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(txt))return false;
+    return /^(DOC-|PMUP-|SVCUP-|RUP-)/.test(id)||/uploaded (?:PM |service )?document|uploaded through Service \/ Hours|Repair Case ID\s*:|Service Event ID\s*:/i.test(txt);
+  }
+  function fin2Month(v){
+    const s=String(v||'').trim();
+    let m=s.match(/^(\d{4})-(\d{2})-/);if(m)return `${m[1]}-${m[2]}`;
+    m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(m)return `${m[3]}-${String(m[1]).padStart(2,'0')}`;
+    return s.slice(0,7);
+  }
+  function fin2Cents(v){return Math.round(Number(v||0)*100);}
+  function fin2Subset(rows,targetCents){
+    // Exact subset search; invoice groups are tiny, cap keeps it safe.
+    const a=rows.filter(r=>fin2Cents(r.amount)!==0).slice(0,18);
+    const target=Math.abs(targetCents);
+    let found=null;
+    function dfs(i,sum,pick){
+      if(found)return;
+      if(Math.abs(sum)===target){found=pick.slice();return;}
+      if(i>=a.length)return;
+      dfs(i+1,sum,pick);
+      pick.push(a[i]);dfs(i+1,sum+fin2Cents(a[i].amount),pick);pick.pop();
+    }
+    dfs(0,0,[]);return found||[];
+  }
+  function fin2CandidatesFromIssues(){
+    const r=window.budgetCloseRecon||budgetCloseRecon;
+    if(!r||!Array.isArray(r.issues))return[];
+    const ym=budgetSelectedMonth,out=[],seen=new Set();
+    for(const issue of r.issues){
+      const diff=Number(issue.difference||0);
+      // Only auto-remove extras from Manager; never synthesize missing accounting rows.
+      if(!(diff>0.005)||!issue.reference)continue;
+      const acct=String(issue.account||'');
+      const ref=fin2Ref(issue.reference);
+      const pool=transactions.filter(t=>!fin2Superseded(t)&&fin2Month(t.transactionDate)===ym&&fin2Acct(t)===acct&&fin2Ref(t.invoiceNumber)===ref&&fin2Provisional(t));
+      if(!pool.length)continue;
+      let picked=[];
+      const poolTotal=pool.reduce((s,t)=>s+fin2Cents(t.amount),0);
+      if(Math.abs(poolTotal-fin2Cents(diff))<=1)picked=pool;
+      else picked=fin2Subset(pool,fin2Cents(diff));
+      for(const t of picked){const k=String(t.spId);if(!seen.has(k)){seen.add(k);out.push({t,issue});}}
+    }
+    return out;
+  }
+  function fin2Payload(t,issue,fileName){
+    return encodeURIComponent(JSON.stringify({v:2,month:budgetSelectedMonth,file:fileName||'',reference:t.invoiceNumber||issue.reference||'',reason:'Auto-superseded because completed monthly budget and NetSuite authority reconcile without this provisional row',workbookAmount:Number(issue.workbook||0),difference:Number(issue.difference||0),at:new Date().toISOString()}));
+  }
+  async function fin2Persist(candidates,fileName){
+    if(!candidates.length)return 0;
+    const token=await getToken(),et=await listEntityType(token,TX_LIST_API),notesField=txFieldMap[normalizeLabel('Notes')];
+    if(!notesField)throw new Error('Forklift Transactions is missing the Notes field needed for financial supersession.');
+    let n=0;
+    for(const c of candidates){
+      const t=c.t,payload=fin2Payload(t,c.issue,fileName),old=String(t.notes||'').trim(),newNotes=old+(old?' | ':'')+'[[FIN_SUPERSEDED:'+payload+']]';
+      const body={__metadata:{type:et}};body[notesField]=newNotes;
+      const resp=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+      if(!resp.ok)throw new Error(`Could not supersede ${t.transactionId||t.spId}: ${await resp.text()}`);
+      t.notes=newNotes;n++;
+    }
+    return n;
+  }
+
+  const fin2BaseHandle=budgetReconHandleFile;
+  budgetReconHandleFile=async function(file){
+    await fin2BaseHandle(file);
+    if(!file||!budgetCloseRecon)return;
+    const candidates=fin2CandidatesFromIssues();
+    if(!candidates.length)return;
+    const status=document.getElementById('budget-close-reconcile-status');
+    try{
+      if(status)status.textContent=`Auto-resolving ${candidates.length} provisional duplicate${candidates.length===1?'':'s'}…`;
+      const n=await fin2Persist(candidates,file.name);
+      if(n){
+        // Re-run the established reconciliation pipeline now that the local rows carry
+        // the superseded marker. This recalculates totals and clears resolved issues.
+        await fin2BaseHandle(file);
+        if(status)status.textContent=`Workbook loaded · ${n} provisional duplicate${n===1?'':'s'} auto-resolved`;
+      }
+    }catch(e){
+      console.error(e);
+      if(status)status.textContent='Workbook loaded · automatic duplicate resolution needs review';
+      const el=document.getElementById('budget-close-reconcile-results');
+      if(el)el.insertAdjacentHTML('beforeend',`<div class="budget-recon-error"><b>Automatic duplicate resolution failed.</b><br>${esc(e.message)}</div>`);
+    }
+  };
+  window.budgetReconHandleFile=budgetReconHandleFile;
+})();
+</script>
 </body>
 </html>
