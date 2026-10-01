@@ -3813,7 +3813,7 @@ try{
 <script id="full-audit-consolidated-stabilization-20261001">
 /* =====================================================================
    FORKLIFT MANAGER — FULL AUDIT CONSOLIDATED STABILIZATION
-   Version: 2026-10-01-full-audit-v1
+   Version: 2026-10-01-full-audit-v2
 
    Goals:
    - Date-only SharePoint writes use noon UTC.
@@ -3827,7 +3827,7 @@ try{
    - Replacement Planning post-MLER service calls are date de-duplicated.
    - Empty legacy Service Event shell rows are hidden from document history.
    ===================================================================== */
-window.FM_STABILIZATION_VERSION='2026-10-01-full-audit-v1';
+window.FM_STABILIZATION_VERSION='2026-10-01-full-audit-v2';
 
 /* -------------------- DATE-ONLY WRITES -------------------- */
 spDateOrNull=function(v){return v?v+'T12:00:00Z':null;};
@@ -4068,9 +4068,9 @@ function fmRepairCaseAlreadyHasCall(caseId){
   const needle=`repair case id: ${String(caseId||'').toLowerCase()}`;
   return transactions.some(t=>t.serviceCall&&!isPM(t,pmGroupSet())&&!isRentalTx(t)&&String(t.notes||'').toLowerCase().includes(needle));
 }
-const fmBaseOpenRepairUpdateModal=openRepairUpdateModal;
-openRepairUpdateModal=function(caseId){
-  const r=fmBaseOpenRepairUpdateModal(caseId);
+const fmBaseOpenRepairUpdate=openRepairUpdate;
+openRepairUpdate=function(caseId){
+  const r=fmBaseOpenRepairUpdate(caseId);
   fmInstallRepairUpdateCallUI();
   const c=repairCaseById(caseId),sel=document.getElementById('ru-service-call-treatment'),help=document.getElementById('ru-service-call-treatment-help');
   if(sel){
@@ -4246,7 +4246,7 @@ renderServiceDocumentHistory=function(){
   const help=document.querySelector('#view-help .section-title');
   if(help&&!document.getElementById('fm-build-version')){
     help.insertAdjacentHTML('afterend',
-      '<div id="fm-build-version" class="muted" style="font-size:9px;margin-top:3px">Audit build: 2026-10-01-full-audit-v1</div>');
+      '<div id="fm-build-version" class="muted" style="font-size:9px;margin-top:3px">Audit build: 2026-10-01-full-audit-v2</div>');
   }
 })();
 </script>
