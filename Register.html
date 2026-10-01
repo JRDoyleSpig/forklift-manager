@@ -3718,5 +3718,96 @@ if(typeof weightedServiceCalls==='function'){
 })();
 </script>
 
+
+<script id="oct01-weighted-service-call-hardening">
+/* ================================================================
+   FINAL AGING / GRADING HARDENING
+   Same forklift + same calendar date = maximum ONE service call
+   across every weighted grading year.
+   This is a calculation safeguard only; it does not rewrite SharePoint.
+   ================================================================ */
+
+const agDateDedupBaseForkliftMetrics = forkliftMetrics;
+
+forkliftMetrics = function(f){
+  const m = agDateDedupBaseForkliftMetrics(f);
+  const pmSet = pmGroupSet();
+  const cy = currentYear();
+
+  // Remove the transaction-by-transaction service-call totals produced by
+  // the base metric function and rebuild them by unique forklift/date.
+  Object.values(m.annual || {}).forEach(a => {
+    a.serviceCalls = 0;
+    a.weightedServiceContribution = 0;
+  });
+
+  m.serviceYTD = 0;
+  m.weightedServiceCalls = 0;
+
+  const seenDates = new Set();
+
+  m.rows.forEach(t => {
+    const y = txYear(t);
+    if (!y || !t.serviceCall || isPM(t, pmSet) || isRentalTx(t)) return;
+
+    // Calendar date is the service-event counting key.
+    // A missing date falls back to the SharePoint record so legitimate
+    // undated records are not silently discarded.
+    const dateKey = t.transactionDate || `UNDATED-${t.spId}`;
+    const key = `${f.id}|${dateKey}`;
+
+    if (seenDates.has(key)) return;
+    seenDates.add(key);
+
+    if (!m.annual[y]) {
+      m.annual[y] = {
+        totalSpend:0,
+        repairSpend:0,
+        serviceCalls:0,
+        pmSpend:0,
+        rentalSpend:0,
+        weightedRepairContribution:0,
+        weightedServiceContribution:0,
+        majorRepairSpend:0
+      };
+    }
+
+    m.annual[y].serviceCalls += 1;
+
+    if (y === cy) m.serviceYTD += 1;
+
+    const weight = agServiceYearWeight(y);
+    if (weight) {
+      m.weightedServiceCalls += weight;
+      m.annual[y].weightedServiceContribution += weight;
+    }
+  });
+
+  return m;
+};
+
+// Update the scoring guide/help text so the calculation rule is documented.
+(function(){
+  const topic=[...document.querySelectorAll('.help-topic summary')]
+    .find(x=>x.textContent.trim()==='Aging / Grading — scoring rules')
+    ?.parentElement?.querySelector('.help-body');
+
+  if(topic && !topic.querySelector('.same-day-service-rule')){
+    const p=document.createElement('p');
+    p.className='same-day-service-rule';
+    p.innerHTML='<b>Service-call de-duplication:</b> for grading, the same forklift can contribute a maximum of one service call per calendar date, regardless of invoice count. The year weighting is then applied to that single daily call.';
+    topic.appendChild(p);
+  }
+})();
+
+// Refresh derived screens immediately if data is already loaded.
+try{
+  if(typeof renderAging==='function') renderAging();
+  if(typeof renderReplacementPlanning==='function') renderReplacementPlanning();
+}catch(e){
+  console.warn('Final service-call grading refresh skipped:', e);
+}
+</script>
+
 </body>
 </html>
