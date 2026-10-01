@@ -3154,5 +3154,569 @@ finStyles();finUpdateHelp();
 /* Final month-close handler binding: use the closure-safe reconciliation handler. */
 if(window.__budgetReconCoreHandleFile)window.budgetReconHandleFile=window.__budgetReconCoreHandleFile;
 </script>
+
+<script id="oct01-servicecall-budget-audit-fixes">
+/* =====================================================================
+   OCT 1, 2026 — SERVICE CALL / PM STATUS / BUDGET AUDIT FIXES
+
+   SERVICE CALL DEFINITION
+   A Service Call is the INITIAL vendor dispatch/diagnostic visit for a
+   repair incident. A return trip to finish the same repair, install parts,
+   perform a callback/rework, or process invoice/paperwork is NOT another
+   service call. A genuinely new/unrelated repair incident can count as a
+   new service call even if it occurs close to another repair.
+
+   This patch does NOT silently rewrite historical transaction flags.
+   Known historical corrections are handled by the companion F12 script.
+   ===================================================================== */
+
+/* ---------- Service-document UI: explicit service-call treatment ---------- */
+function scInstallWorkOrderUI(){
+  const txType=document.getElementById('wo-transaction-type');
+  if(!txType || document.getElementById('wo-service-call-treatment')) return;
+
+  const group=document.createElement('div');
+  group.className='form-group';
+  group.id='wo-service-call-treatment-wrap';
+  group.innerHTML=`
+    <label class="form-label">Service Call Treatment</label>
+    <select class="form-input" id="wo-service-call-treatment" onchange="scRefreshWorkOrderServiceCallUI()">
+      <option value="new">New repair service call — COUNT</option>
+      <option value="followup">Return / completion / callback — DO NOT COUNT</option>
+      <option value="none">Invoice / paperwork only — DO NOT COUNT</option>
+    </select>
+    <div class="muted" id="wo-service-call-help" style="font-size:9px;margin-top:4px;line-height:1.4">
+      Count only the initial vendor dispatch for a repair incident. A return trip to finish the same repair is not another service call.
+    </div>`;
+  txType.closest('.form-group')?.insertAdjacentElement('afterend',group);
+
+  // Make the transaction editor definition equally explicit.
+  const txe=document.getElementById('txe-service');
+  if(txe){
+    const label=txe.closest('.form-group')?.querySelector('label[style]');
+    if(label) label.innerHTML='<input type="checkbox" id="txe-service"> Counts as NEW repair service call <span class="muted">(uncheck for return/completion/callback)</span>';
+  }
+}
+
+function scRecentServiceCalls(fid,date){
+  if(!fid||!date) return [];
+  const target=new Date(date+'T00:00:00');
+  return transactions
+    .filter(t=>t.forkliftId===fid && t.serviceCall && !isPM(t,pmGroupSet()) && !isRentalTx(t) && t.transactionDate)
+    .map(t=>({t,days:Math.abs((target-new Date(t.transactionDate+'T00:00:00'))/86400000)}))
+    .filter(x=>x.days<=30)
+    .sort((a,b)=>a.days-b.days || String(b.t.transactionDate).localeCompare(String(a.t.transactionDate)));
+}
+
+function scRefreshWorkOrderServiceCallUI(){
+  const wrap=document.getElementById('wo-service-call-treatment-wrap');
+  const sel=document.getElementById('wo-service-call-treatment');
+  if(!wrap||!sel) return;
+
+  const type=formVal('wo-transaction-type')||'Do Not Create Transaction';
+  const repair=type==='Repair / Expense';
+  wrap.style.display=repair?'':'none';
+  if(!repair) return;
+
+  const fid=formVal('wo-forklift'),date=formVal('wo-date');
+  const recent=scRecentServiceCalls(fid,date);
+  const help=document.getElementById('wo-service-call-help');
+  if(help){
+    let msg='Count only the initial vendor dispatch for a repair incident. A return trip to finish the same repair is not another service call.';
+    if(recent.length){
+      const x=recent[0].t;
+      msg+=` Recent counted service call: ${fmtDate(x.transactionDate)}${x.invoiceNumber?' · '+x.invoiceNumber:''}. If this document is part of that same repair, choose Return / completion.`;
+    }
+    help.textContent=msg;
+  }
+}
+
+function scShouldCountWorkOrder(){
+  const type=formVal('wo-transaction-type')||'Do Not Create Transaction';
+  return type==='Repair / Expense' && formVal('wo-service-call-treatment')==='new';
+}
+
+/* Keep existing transaction preview, but replace the old automatic Yes/No
+   with the explicit user-selected treatment. */
+const scBaseRefreshWorkOrderTransactionPreview = refreshWorkOrderTransactionPreview;
+refreshWorkOrderTransactionPreview=function(){
+  scBaseRefreshWorkOrderTransactionPreview();
+  scInstallWorkOrderUI();
+  scRefreshWorkOrderServiceCallUI();
+
+  const el=document.getElementById('wo-transaction-preview');
+  const type=formVal('wo-transaction-type')||'Do Not Create Transaction';
+  const amount=numOrNull(formVal('wo-amount'));
+  if(!el || type==='Do Not Create Transaction' || amount==null) return;
+
+  const shouldCount=scShouldCountWorkOrder();
+  const existing=[...el.querySelectorAll('b')].find(x=>/^(Yes|No)$/.test(x.textContent.trim()));
+  if(existing) existing.textContent=shouldCount?'Yes — NEW repair call':'No — follow-up / non-call';
+};
+
+const scBaseWorkOrderPMChanged = workOrderPMChanged;
+workOrderPMChanged=function(){
+  scBaseWorkOrderPMChanged();
+  scRefreshWorkOrderServiceCallUI();
+};
+
+const scBaseOpenWorkOrderModal = openWorkOrderModal;
+openWorkOrderModal=function(selected=''){
+  scInstallWorkOrderUI();
+  const result=scBaseOpenWorkOrderModal(selected);
+  setFormVal('wo-service-call-treatment','new');
+  scRefreshWorkOrderServiceCallUI();
+  return result;
+};
+
+const scBaseAnalyzeWorkOrderFile = analyzeWorkOrderFile;
+analyzeWorkOrderFile=async function(file){
+  const result=await scBaseAnalyzeWorkOrderFile(file);
+  scInstallWorkOrderUI();
+  const type=formVal('wo-transaction-type');
+  if(type==='Repair / Expense' && !formVal('wo-service-call-treatment'))
+    setFormVal('wo-service-call-treatment','new');
+  scRefreshWorkOrderServiceCallUI();
+  refreshWorkOrderTransactionPreview();
+  return result;
+};
+
+const scBaseRefreshWorkOrderMatch = refreshWorkOrderMatch;
+refreshWorkOrderMatch=function(){
+  const result=scBaseRefreshWorkOrderMatch();
+  scRefreshWorkOrderServiceCallUI();
+  return result;
+};
+
+/* The final existing save routine knows how to handle lifecycle/history,
+   document attachments, transaction matching, and duplicate prevention.
+   Temporarily intercept its transaction writes so the user's explicit
+   service-call choice controls the saved boolean. */
+const scBaseSaveWorkOrderHours = saveWorkOrderHours;
+saveWorkOrderHours=async function(){
+  scInstallWorkOrderUI();
+  const type=formVal('wo-transaction-type')||'Do Not Create Transaction';
+  const shouldCount=scShouldCountWorkOrder();
+
+  if(type==='Repair / Expense' && shouldCount){
+    const recent=scRecentServiceCalls(formVal('wo-forklift'),formVal('wo-date'));
+    if(recent.length){
+      const x=recent[0].t;
+      const ok=confirm(
+        `This will count as a NEW repair service call.\n\n`+
+        `A counted service call already exists within 30 days:\n`+
+        `${fmtDate(x.transactionDate)}${x.invoiceNumber?' · '+x.invoiceNumber:''}\n\n`+
+        `If this is a return trip, parts installation, callback/rework, or completion of the same repair, choose "Return / completion / callback — DO NOT COUNT" instead.\n\n`+
+        `Is this truly a separate NEW repair incident / initial vendor dispatch?`
+      );
+      if(!ok) return;
+    }
+  }
+
+  const originalCreate=createTransactionLine;
+  const originalUpdate=updateMatchingTransactionFromServiceDocument;
+  createTransactionLine=async function(token,etype,data){
+    if(data && data.category==='Repair / Expense') data.serviceCall=shouldCount;
+    if(data && (data.category==='PM Service'||data.category==='Rental')) data.serviceCall=false;
+    return originalCreate(token,etype,data);
+  };
+  updateMatchingTransactionFromServiceDocument=async function(token,match,data){
+    if(data && data.category==='Repair / Expense') data.serviceCall=shouldCount;
+    if(data && (data.category==='PM Service'||data.category==='Rental')) data.serviceCall=false;
+    return originalUpdate(token,match,data);
+  };
+
+  try{
+    return await scBaseSaveWorkOrderHours();
+  }finally{
+    createTransactionLine=originalCreate;
+    updateMatchingTransactionFromServiceDocument=originalUpdate;
+  }
+};
+
+/* NetSuite import already has an editable invoice-level service-call checkbox.
+   Clarify that it means a NEW repair call, not every repair invoice. */
+const scBaseRenderImportPreview = renderImportPreview;
+renderImportPreview=function(){
+  const r=scBaseRenderImportPreview();
+  document.querySelectorAll('#import-preview-body label').forEach(l=>{
+    if(l.textContent.includes('1 Service Call')){
+      const cb=l.querySelector('input');
+      if(cb){
+        l.innerHTML='';
+        l.appendChild(cb);
+        l.append(' New Service Call');
+        l.title='Check only for the initial vendor dispatch of a repair incident. Leave unchecked for a return/completion/callback invoice.';
+      }
+    }
+  });
+  const sum=document.getElementById('import-summary');
+  if(sum && !document.getElementById('sc-import-note')){
+    sum.insertAdjacentHTML('beforeend',
+      '<div id="sc-import-note" style="margin-top:6px;font-size:9px;color:var(--muted)"><b>Service Call rule:</b> count the initial repair dispatch only. Return/completion/callback invoices for the same repair stay unchecked.</div>');
+  }
+  return r;
+};
+
+/* ---------- PM classification safeguard ----------
+   $135 remains a useful historical PM clue, but it must never override an
+   explicit Service Call = Yes. This specifically prevents a real repair such
+   as #75 / 113415233 from being reclassified merely because PM text was
+   entered incorrectly elsewhere. Historical confirmed PM rows should be
+   corrected explicitly, not guessed from a current service-call record. */
+const scBaseIsPM = isPM;
+isPM=function(t,pmSet=null){
+  const category=String(t.category||'').toLowerCase();
+  const notes=String(t.notes||'').toLowerCase();
+  if(category.includes('pm') || notes.includes('category: pm service')) return true;
+  // A transaction explicitly marked as a repair service call is not allowed
+  // to become PM solely from legacy amount/pattern heuristics.
+  if(t.serviceCall) return false;
+  return scBaseIsPM(t,pmSet);
+};
+
+/* ---------- Aging PM status: use the PM Schedule engine ---------- */
+pmCompliance=function(m,f){
+  if(typeof pmStatusFor==='function'){
+    const s=pmStatusFor(f);
+    const label=s?.label||'Schedule Missing';
+    const cls=label==='On Schedule'?'pm-on':
+      (label==='Overdue'||label==='No PM History'||label==='Schedule Missing')?'pm-behind':'pm-missing';
+    return {label,cls};
+  }
+  if(m.pmExpectedToDate==null)return {label:'Frequency Missing',cls:'pm-missing'};
+  return m.pmCountYTD>=m.pmExpectedToDate?{label:'On Track',cls:'pm-on'}:{label:'Behind',cls:'pm-behind'};
+};
+
+const scBaseRenderAging = renderAging;
+renderAging=function(){
+  scBaseRenderAging();
+
+  const rows=fleet.filter(f=>!['Retired','Scrapped','Sold'].includes(f.status));
+  if(typeof pmStatusFor==='function'){
+    const counts={};
+    rows.forEach(f=>{const l=pmStatusFor(f).label;counts[l]=(counts[l]||0)+1;});
+    const on=counts['On Schedule']||0;
+    const card=document.querySelector('#ag-stats-row .stat-card:last-child');
+    if(card){
+      const pct=rows.length?Math.round(on/rows.length*100):0;
+      card.innerHTML=`<div class="stat-label">PM Schedule Status</div>
+        <div class="stat-value">${pct}%</div>
+        <div class="stat-sub">${on} on schedule · ${counts['Due Soon']||0} due soon · ${counts['Overdue']||0} overdue · ${counts['Review Recommended']||0} review · ${counts['No PM History']||0} no history${counts['Parked — PM Paused']?` · ${counts['Parked — PM Paused']} parked`:''}</div>`;
+    }
+  }
+
+  ['ag-attention-table','ag-table'].forEach(id=>{
+    document.querySelectorAll(`#${id} thead th`).forEach(th=>{
+      if(th.textContent.trim()==='PM Count / Expected') th.textContent='PM Txns YTD / Annual Target';
+      if(th.textContent.trim()==='PM Compliance') th.textContent='PM Schedule Status';
+    });
+  });
+};
+
+/* ---------- Budget PM forecast: PM Schedule determines WHEN ---------- */
+budgetPMForecasts=function(){
+  const groups=budgetPMGroups();
+  const fleetCost=budgetMedian(groups.map(x=>x.cost))||173.88;
+  const out=[],today=new Date(todayISO()+'T00:00:00');
+  const horizonYM=budgetShiftYM(todayISO().slice(0,7),3);
+
+  for(const f of fleet){
+    if(['Parked','Retired','Scrapped','Sold'].includes(f.status))continue;
+
+    const own=groups.filter(x=>x.forkliftId===f.id).sort((a,b)=>a.date.localeCompare(b.date));
+    const cost=own.length?budgetMedian(own.map(x=>x.cost)):fleetCost;
+    const d=(typeof pmDerivedMap!=='undefined' && pmDerivedMap.get(f.id)) ||
+      (typeof pmDerive==='function'?pmDerive(f):null);
+
+    let due=d?.nextPM||f.nextPM||'';
+    const freq=d?.recommendedFrequency||f.pmFrequency||'';
+    const months=typeof pmMonthsForFrequency==='function'?pmMonthsForFrequency(freq):null;
+    if(!due||!months)continue;
+
+    let dueISO=due;
+    for(let guard=0;guard<8;guard++){
+      let dueDate=new Date(dueISO+'T00:00:00');
+      if(Number.isNaN(dueDate.getTime()))break;
+
+      // If overdue, carry one known PM exposure into the current month rather
+      // than skipping it and creating a false sense of remaining budget.
+      const expenseBase=dueDate<today?today:dueDate;
+      const inv=new Date(expenseBase.getTime()+7*86400000);
+      const ym=budgetYM(inv.getFullYear(),inv.getMonth()+1);
+      if(ym>horizonYM)break;
+
+      const sourceId=`PM:${f.id}:${dueISO}`;
+      const ov=budgetManualOverride('PM',sourceId);
+      out.push({
+        key:`pm:${sourceId}`,
+        account:BUDGET_ACCOUNT_6022,
+        type:'Expected PM',
+        forecastType:'PM Forecast',
+        forkliftId:f.id,
+        workroom:f.workroom,
+        vendor:own.at(-1)?.vendor||f.serviceVendor||'',
+        amount:ov?ov.amount:Math.round(cost*100)/100,
+        ym:ov?budgetYM(ov.year,ov.monthNumber):ym,
+        confidence:own.length>=2?'High':own.length?'Medium':'Low',
+        issue:'',
+        status:dueDate<today?'Overdue / Expected':'Expected',
+        sourceType:'PM',
+        sourceId,
+        basis:`PM Schedule due ${fmtDate(dueISO)} · ${freq||'frequency not set'} · ${own.length?'own PM median':'fleet PM median'} ${fmtMoney(cost)}`,
+        description:`PM forecast for ${f.id}`,
+        canOverride:true
+      });
+
+      // Only one overdue exposure belongs in the current month. Future PMs
+      // continue from the scheduled due date, not from today's date.
+      dueISO=pmAddMonths(dueISO,months);
+      if(dueDate<today){
+        while(new Date(dueISO+'T00:00:00')<today)
+          dueISO=pmAddMonths(dueISO,months);
+      }
+    }
+  }
+  return out;
+};
+
+/* ---------- Forecast History: retire drivers no longer live ---------- */
+async function scRetireStaleForecastHistory(token,forecasts){
+  if(!budgetHistoryFieldMap[normalizeLabel('Is Current Forecast')])return 0;
+  const active=new Set(forecasts.map(f=>`${f.sourceType}|${String(f.sourceId)}`));
+  const stale=budgetHistory.filter(h=>
+    h.isCurrent &&
+    ['Repair Case','PM','Rental'].includes(h.sourceType) &&
+    !active.has(`${h.sourceType}|${String(h.sourceRecordId)}`)
+  );
+  if(!stale.length)return 0;
+
+  const et=await listEntityType(token,BUDGET_HISTORY_LIST_API);
+  for(const h of stale){
+    const body={__metadata:{type:et}};
+    fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Is Current Forecast',false);
+    const r=await fetch(BUDGET_HISTORY_LIST_API+`/items(${h.spId})`,{
+      method:'POST',
+      headers:{
+        Accept:'application/json;odata=verbose',
+        'Content-Type':'application/json;odata=verbose',
+        Authorization:'Bearer '+token,
+        'X-HTTP-Method':'MERGE',
+        'IF-MATCH':'*'
+      },
+      body:JSON.stringify(body)
+    });
+    if(!r.ok)throw new Error(`Could not retire forecast history ${h.spId}: ${await r.text()}`);
+    h.isCurrent=false;
+  }
+  return stale.length;
+}
+
+budgetSyncAutoForecasts=async function(token){
+  if(budgetSyncInProgress||!budgetHistoryFieldMap[normalizeLabel('Forecast Amount')])return;
+  budgetSyncInProgress=true;
+  try{
+    const forecasts=budgetAllForecasts();
+    await scRetireStaleForecastHistory(token,forecasts);
+    for(const f of forecasts){
+      const cur=[...budgetHistory]
+        .filter(h=>h.isCurrent&&h.sourceType===f.sourceType&&h.sourceRecordId===String(f.sourceId))
+        .sort((a,b)=>String(b.forecastDate).localeCompare(String(a.forecastDate))||b.spId-a.spId)[0];
+      if(cur?.autoManual==='Manual Override')continue;
+      const p=budgetYMParts(f.ym);
+      if(!cur||Math.abs(Number(cur.amount)-Number(f.amount))>.01||cur.year!==p.year||cur.monthNumber!==p.month||cur.confidence!==f.confidence)
+        await budgetWriteForecastHistory(token,{...f,autoManual:'Auto'});
+    }
+  }catch(e){
+    console.warn('Auto forecast sync skipped:',e);
+  }finally{
+    budgetSyncInProgress=false;
+  }
+};
+
+/* ---------- Help text ---------- */
+(function(){
+  scInstallWorkOrderUI();
+  const serviceHelp=[...document.querySelectorAll('.help-topic summary')]
+    .find(x=>x.textContent.trim()==='What exactly counts as a Service Call?')
+    ?.parentElement?.querySelector('.help-body');
+  if(serviceHelp){
+    serviceHelp.innerHTML=`
+      <p>A <b>Service Call</b> means the <b>initial vendor dispatch/diagnostic visit for a repair incident</b>. It is not the number of invoices, accounting lines, or technician trips.</p>
+      <p><b>Count = Yes:</b> the first service visit for a new repair problem. A genuinely separate new failure can count as another service call even if it happens close in time.</p>
+      <p><b>Count = No:</b> a return trip to complete the same repair, install ordered parts, perform a callback/rework, finish previously diagnosed work, or process an invoice/paperwork-only document.</p>
+      <p><b>PMs and rental-only transactions are always No.</b> The Upload PM / Work Order / Invoice screen now requires an explicit Service Call Treatment for repair transactions.</p>`;
+  }
+})();
+</script>
+
+
+<script id="oct01-same-day-one-service-call-rule">
+/* ================================================================
+   FINAL SERVICE CALL RULE — OCT 1, 2026
+   For the same forklift on the same calendar date:
+   MAXIMUM ONE Service Call = Yes, regardless of invoice count.
+   ================================================================ */
+
+function scSameDayCalls(fid,date){
+  return transactions.filter(t=>
+    t.forkliftId===fid &&
+    t.transactionDate===date &&
+    t.serviceCall &&
+    !isPM(t,pmGroupSet()) &&
+    !isRentalTx(t)
+  );
+}
+
+/* Work Order / Invoice upload:
+   if that forklift already has a counted service call on that same date,
+   this document cannot create another one. */
+const scFinalBaseRefresh = scRefreshWorkOrderServiceCallUI;
+scRefreshWorkOrderServiceCallUI=function(){
+  scFinalBaseRefresh();
+  const wrap=document.getElementById('wo-service-call-treatment-wrap');
+  const sel=document.getElementById('wo-service-call-treatment');
+  const help=document.getElementById('wo-service-call-help');
+  if(!wrap||!sel||wrap.style.display==='none')return;
+
+  const fid=formVal('wo-forklift'),date=formVal('wo-date');
+  const same=scSameDayCalls(fid,date);
+
+  // Restore options in case the user changed forklift/date.
+  const newOpt=[...sel.options].find(o=>o.value==='new');
+  if(newOpt)newOpt.disabled=false;
+
+  if(same.length){
+    sel.value='followup';
+    if(newOpt)newOpt.disabled=true;
+    if(help){
+      help.textContent=`${fid} already has a counted service call on ${fmtDate(date)}. Same forklift + same date = one service call maximum, so this document will NOT count as another service call.`;
+    }
+  }
+};
+
+const scFinalBaseShouldCount = scShouldCountWorkOrder;
+scShouldCountWorkOrder=function(){
+  const fid=formVal('wo-forklift'),date=formVal('wo-date');
+  if(scSameDayCalls(fid,date).length) return false;
+  return scFinalBaseShouldCount();
+};
+
+/* NetSuite import:
+   only one imported/existing counted service call is allowed per forklift/date,
+   even when there are multiple invoice numbers. */
+function scNormalizeImportSameDay(){
+  const existingDates=new Set(
+    transactions
+      .filter(t=>t.serviceCall && !isPM(t,pmGroupSet()) && !isRentalTx(t))
+      .map(t=>`${t.forkliftId}|${t.transactionDate}`)
+  );
+
+  const grouped={};
+  importRows.forEach((r,i)=>{
+    if(r.category==='PM Service') { r.serviceCall=false; return; }
+    const k=`${r.forkliftId}|${r.transactionDate}`;
+    (grouped[k]??=[]).push({r,i});
+  });
+
+  Object.entries(grouped).forEach(([k,arr])=>{
+    if(existingDates.has(k)){
+      arr.forEach(x=>x.r.serviceCall=false);
+      return;
+    }
+    const selected=arr.filter(x=>x.r.serviceCall && !x.r.duplicate);
+    if(selected.length<=1)return;
+
+    // Keep exactly one suggested service call for the date.
+    // Prefer the earliest CSV row, because service-call counting is about the
+    // event, not which accounting invoice/line carries the flag.
+    selected.sort((a,b)=>a.r.sourceIndex-b.r.sourceIndex);
+    selected.slice(1).forEach(x=>x.r.serviceCall=false);
+  });
+}
+
+const scFinalBaseRenderImportPreview = renderImportPreview;
+renderImportPreview=function(){
+  scNormalizeImportSameDay();
+  const result=scFinalBaseRenderImportPreview();
+
+  // If a user manually checks a service-call box, enforce one per forklift/date.
+  document.querySelectorAll('#import-preview-body input[type="checkbox"]').forEach(cb=>{
+    if(cb.dataset.scFinalBound)return;
+    const row=cb.closest('tr');
+    if(!row)return;
+    const text=row.textContent||'';
+    if(!/New Service Call|Service Call/.test(text))return;
+    cb.dataset.scFinalBound='1';
+    cb.addEventListener('change',()=>{
+      // Existing onchange updates importRows first; normalize immediately after.
+      setTimeout(()=>{
+        scNormalizeImportSameDay();
+        scFinalBaseRenderImportPreview();
+      },0);
+    });
+  });
+
+  const note=document.getElementById('sc-import-note');
+  if(note){
+    note.innerHTML='<b>Service Call rule:</b> one counted service call maximum per forklift per calendar date, regardless of how many invoice numbers or return/completion documents exist.';
+  }
+  return result;
+};
+
+/* Aging / grading safety:
+   Even before historical SharePoint cleanup is run, count at most one
+   repair service call per forklift/date in scoring. */
+const scFinalBaseForkliftMetrics = forkliftMetrics;
+forkliftMetrics=function(f){
+  const m=scFinalBaseForkliftMetrics(f);
+  const rows=txForForklift(f.id),pmSet=pmGroupSet(),cy=currentYear();
+
+  const countedDates=new Set();
+  rows.forEach(t=>{
+    if(txYear(t)!==cy) return;
+    if(!t.serviceCall || isPM(t,pmSet) || isRentalTx(t)) return;
+    countedDates.add(t.transactionDate||`sp:${t.spId}`);
+  });
+  m.serviceYTD=countedDates.size;
+  return m;
+};
+
+/* Weighted grading service-call history also gets date de-duplication.
+   Override only the weighted calls helper used by grading if present. */
+if(typeof weightedServiceCalls==='function'){
+  const scFinalBaseWeightedServiceCalls=weightedServiceCalls;
+  weightedServiceCalls=function(fid){
+    const rows=txForForklift(fid),pmSet=pmGroupSet(),cy=currentYear();
+    const weights={[cy]:1,[cy-1]:0.75,[cy-2]:0.50,[cy-3]:0.10};
+    const seen=new Set();
+    let total=0;
+    rows.forEach(t=>{
+      const y=txYear(t);
+      if(!weights[y] || !t.serviceCall || isPM(t,pmSet) || isRentalTx(t))return;
+      const k=`${y}|${t.transactionDate||t.spId}`;
+      if(seen.has(k))return;
+      seen.add(k);
+      total+=weights[y];
+    });
+    return total;
+  };
+}
+
+/* Help text gets the exact business rule. */
+(function(){
+  const serviceHelp=[...document.querySelectorAll('.help-topic summary')]
+    .find(x=>x.textContent.trim()==='What exactly counts as a Service Call?')
+    ?.parentElement?.querySelector('.help-body');
+  if(serviceHelp){
+    serviceHelp.innerHTML=`
+      <p>A <b>Service Call</b> means the initial vendor dispatch/diagnostic visit for a repair incident.</p>
+      <p><b>Hard rule:</b> the same forklift can have a maximum of <b>one counted service call per calendar date</b>, regardless of how many invoice numbers, accounting lines, technician visits, return trips, parts-installation visits, callbacks, or completion documents occur that day.</p>
+      <p>A later return visit on a different date to finish the same repair should also remain <b>Service Call = No</b>. A genuinely new repair incident on a later date can count as a new service call.</p>
+      <p><b>PMs and rental-only transactions are always No.</b></p>`;
+  }
+})();
+</script>
+
 </body>
 </html>
