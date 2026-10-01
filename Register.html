@@ -949,7 +949,7 @@ async function saveTransactionEdit(){
 function formVal(id){return document.getElementById(id)?.value??'';}
 function setFormVal(id,v){const e=document.getElementById(id);if(e)e.value=(v===null||v===undefined)?'':v;}
 function numOrNull(v){if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
-function spDateOrNull(v){return v?v+'T00:00:00Z':null;}
+function spDateOrNull(v){return v?v+'T12:00:00Z':null;}
 
 function openForkliftModal(spId){
   editingForkliftSpId=spId||null;
@@ -1469,7 +1469,7 @@ function populateForkliftSelect(id,selected='',includeSerial=false){const el=doc
 function fieldAssign(body,map,meta,label,value){const k=normalizeLabel(label),internal=map[k],m=meta[k];if(!internal||value===undefined||value===null||value==='')return;const t=m?.TypeAsString||'';if(t==='Boolean')body[internal]=!!value;else if(['Number','Currency','Integer'].includes(t))body[internal]=Number(value);else if(t==='DateTime')body[internal]=String(value).includes('T')?value:value+'T12:00:00Z';else if(t==='Choice'){const ch=m.Choices?.results||[];const exact=ch.find(x=>String(x).toLowerCase()===String(value).toLowerCase());if(exact)body[internal]=exact;else if(m.FillInChoice)body[internal]=String(value);}else body[internal]=String(value);}
 async function listEntityType(token,listApi){const r=await fetch(listApi+'?$select=ListItemEntityTypeFullName',{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Could not read SharePoint list type (HTTP '+r.status+').');return (await r.json()).d.ListItemEntityTypeFullName;}
 async function createHourReading(token,{forkliftId,date,hours,source,workroom,reference,notes}){if(!forkliftId||!date||hours===null||hours===undefined||hours==='')return null;const exists=hourReadings.some(h=>h.forkliftId===forkliftId&&h.readingDate===date&&Number(h.hours)===Number(hours));if(exists)return null;const et=await listEntityType(token,HOUR_LIST_API),body={__metadata:{type:et},Title:`HR-${forkliftId.replace('#','')}-${date.replaceAll('-','')}-${String(hours).replace('.','_')}`};fieldAssign(body,hourFieldMap,hourFieldMeta,'Forklift ID',forkliftId);fieldAssign(body,hourFieldMap,hourFieldMeta,'Reading Date',date);fieldAssign(body,hourFieldMap,hourFieldMeta,'Hours',hours);fieldAssign(body,hourFieldMap,hourFieldMeta,'Source',source);fieldAssign(body,hourFieldMap,hourFieldMeta,'Workroom',workroom);fieldAssign(body,hourFieldMap,hourFieldMeta,'Invoice / Work Order',reference);fieldAssign(body,hourFieldMap,hourFieldMeta,'Notes',notes);const r=await fetch(HOUR_LIST_API+'/items',{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('Hour Reading save failed: '+await r.text());return (await r.json()).d;}
-async function updateFleetHours(token,f,hours,date){const old=Number(f.hours||0),next=Number(hours);if(!Number.isFinite(next))return;if(next<old&&!confirm(`The new reading (${next.toLocaleString()}) is LOWER than the current reading (${old.toLocaleString()}) for ${f.id}. Save it anyway?`))throw new Error('Hour update cancelled.');const et=await getListItemType(token),body={__metadata:{type:et}};const hi=fieldMap[normalizeLabel('Current Hours')],di=fieldMap[normalizeLabel('Hours Updated')];if(hi)body[hi]=next;if(di)body[di]=(date||todayISO())+'T00:00:00Z';const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Current Hours update failed: '+await r.text());}
+async function updateFleetHours(token,f,hours,date){const old=Number(f.hours||0),next=Number(hours);if(!Number.isFinite(next))return;if(next<old&&!confirm(`The new reading (${next.toLocaleString()}) is LOWER than the current reading (${old.toLocaleString()}) for ${f.id}. Save it anyway?`))throw new Error('Hour update cancelled.');const et=await getListItemType(token),body={__metadata:{type:et}};const hi=fieldMap[normalizeLabel('Current Hours')],di=fieldMap[normalizeLabel('Hours Updated')];if(hi)body[hi]=next;if(di)body[di]=(date||todayISO())+'T12:00:00Z';const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Current Hours update failed: '+await r.text());}
 
 // Enhanced fleet save: every changed Current Hours value produces an Hour Reading.
 saveForklift=async function(){const btn=document.getElementById('forklift-save-btn'),forkliftId=formVal('ff-id').trim(),selectedWorkroom=formVal('ff-workroom').trim(),selectedStatus=formVal('ff-status').trim(),disposed=['Retired','Scrapped','Sold'].includes(selectedStatus),dispositionDate=disposed?formVal('ff-disposition-date').trim():'';if(!forkliftId){alert('Forklift ID is required.');return;}if(!forkliftId.startsWith('#')){alert('Forklift ID should begin with # (example: #85).');return;}if(!selectedWorkroom){alert('Current Workroom is required.');return;}if(disposed&&!dispositionDate){alert('Disposition Date is required for Retired, Scrapped, or Sold. Enter the actual date manually.');return;}if(!disposed&&!activeWorkrooms.includes(selectedWorkroom)){alert('Active, Down for Repair, and Parked forklifts must be assigned to an Active Lease Manager location.');return;}const duplicate=fleet.find(x=>x.id===forkliftId&&x.spId!==editingForkliftSpId);if(duplicate){alert(`${forkliftId} already exists.`);return;}const old=fleet.find(x=>x.spId===editingForkliftSpId),oldHours=old?.hours,newHours=numOrNull(formVal('ff-hours'));let readingDate=formVal('ff-hours-updated')||todayISO(),hoursChanged=newHours!==null&&(oldHours===null||oldHours===undefined||Number(oldHours)!==Number(newHours));if(hoursChanged&&oldHours!=null&&Number(newHours)<Number(oldHours)&&!confirm(`The new Current Hours (${Number(newHours).toLocaleString()}) is lower than the existing reading (${Number(oldHours).toLocaleString()}). Continue?`))return;if(hoursChanged&&!formVal('ff-hours-updated'))setFormVal('ff-hours-updated',readingDate);btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken(),itemType=await getListItemType(token),body={__metadata:{type:itemType},Title:forkliftId};const values={'Manufacturer':formVal('ff-manufacturer').trim(),'Model':formVal('ff-model').trim(),'Serial Number':formVal('ff-serial').trim(),'Current Workroom':selectedWorkroom,'Status':selectedStatus,'Disposition Date':dispositionDate,'Current Hours':formVal('ff-hours'),'Hours Updated':formVal('ff-hours-updated'),'Acquisition Date':formVal('ff-acqdate'),'Acquisition Cost':formVal('ff-acqcost'),'Attachment':formVal('ff-attachment'),'Carriage-Mounted Pole Qty':formVal('ff-carriage'),'Fork-Mounted Pole Qty':formVal('ff-forkmounted'),'Fork Qty':formVal('ff-forkqty'),'Fuel Type':formVal('ff-fuel'),'Tire Type':formVal('ff-tire').trim(),'Capacity (lbs)':formVal('ff-capacity'),'Mast Height (in)':formVal('ff-mast'),'Year':formVal('ff-year'),'Primary Service Vendor':formVal('ff-vendor').trim(),'Primary Service Vendor Phone':formVal('ff-vendor-phone').trim(),'PM Frequency':formVal('ff-pmfreq').trim(),'Last PM Date':formVal('ff-lastpm'),'Next PM Due':formVal('ff-nextpm'),'Notes':formVal('ff-notes').trim()};for(const [label,value] of Object.entries(values)){const internal=fieldMap[normalizeLabel(label)];if(internal)body[internal]=fieldPayloadValue(label,value);}let savedId=editingForkliftSpId;if(editingForkliftSpId){const r=await fetch(SP_ITEMS_API+`(${editingForkliftSpId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('SharePoint update failed: '+await r.text());}else{const r=await fetch(SP_ITEMS_API,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});if(!r.ok)throw new Error('SharePoint create failed: '+await r.text());savedId=(await r.json()).d.Id;}if(hoursChanged){try{await createHourReading(token,{forkliftId,date:readingDate,hours:newHours,source:old?'Manual Update':'Initial Entry',workroom:selectedWorkroom,reference:'',notes:old?'Current Hours changed from '+(oldHours??'blank')+' to '+newHours+'.':'Initial Current Hours entry.'});}catch(e){console.error(e);alert('Forklift saved, but the Hour Reading history entry could not be created: '+e.message);}}document.getElementById('forklift-modal').classList.remove('open');editingForkliftSpId=null;tokenCache=null;await loadData(true);}catch(err){console.error(err);alert('Save failed: '+err.message);}finally{btn.disabled=false;btn.textContent='Save Forklift';}};
@@ -1523,7 +1523,7 @@ async function createServiceEventRecord(token,data,files=[]){
   return item;
 }
 async function uploadAttachment(token,listApi,itemId,file){const safe=file.name.replaceAll("'","''");const r=await fetch(`${listApi}/items(${itemId})/AttachmentFiles/add(FileName='${encodeURIComponent(safe)}')`,{method:'POST',headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token},body:await file.arrayBuffer()});if(!r.ok)throw new Error(await r.text());}
-async function updateLastPMFromUpload(token,f,date){const internal=fieldMap[normalizeLabel('Last PM Date')];if(!internal)return;const et=await getListItemType(token),body={__metadata:{type:et}};body[internal]=date+'T00:00:00Z';const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Could not update Last PM Date: '+await r.text());}
+async function updateLastPMFromUpload(token,f,date){const internal=fieldMap[normalizeLabel('Last PM Date')];if(!internal)return;const et=await getListItemType(token),body={__metadata:{type:et}};body[internal]=date+'T12:00:00Z';const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Could not update Last PM Date: '+await r.text());}
 function transactionDocMatch(fid,ref,amount){const key=`${fid}|${String(ref||'').trim().toUpperCase()}|${Number(amount||0).toFixed(2)}`;return transactions.some(t=>importDocKey(t)===key);}
 async function saveWorkOrderHours(){const fid=formVal('wo-forklift'),f=fleet.find(x=>x.id===fid),hours=numOrNull(formVal('wo-hours')),date=formVal('wo-date'),serial=formVal('wo-serial').trim(),ref=formVal('wo-reference').trim(),vendor=formVal('wo-vendor').trim(),amount=numOrNull(formVal('wo-amount')),isPM=document.getElementById('wo-is-pm').checked;if(!f){alert('Select the forklift.');return;}if(!date){alert('Service / Document Date is required.');return;}if(serial&&f.serial&&serial.toUpperCase()!==String(f.serial).toUpperCase()&&!confirm(`Detected serial ${serial} does not match ${f.id} serial ${f.serial}. Continue anyway?`))return;if(amount!=null&&!isPM&&!confirm('An invoice amount is entered, but PM Document is not checked. Save the document without creating a financial transaction?'))return;const parts=[`Save document for ${f.id} · ${f.workroom}?`,`Date: ${fmtDate(date)}`,`Type: ${isPM?'PM':'Service / Hours'}`,`Hours: ${hours==null?'No reading':fmtNum(hours)}`,`Reference: ${ref||'None'}`,`Invoice Amount: ${amount==null?'None':fmtMoney(amount)}`];if(isPM&&amount!=null)parts.push('A PM Service transaction will be created with Service Call = No.');if(!confirm(parts.join('\n')))return;const btn=document.getElementById('wo-save');btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken();if(hours!=null){await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:isPM?'PM':'Work Order',workroom:f.workroom,reference:ref,notes:[vendor?`Vendor: ${vendor}`:'',serial?`Serial: ${serial}`:'',formVal('wo-notes')].filter(Boolean).join(' | ')});}const eventId=(isPM?'PM':'WO')+'-'+f.id.replace('#','')+'-'+date.replaceAll('-','')+'-'+String(ref||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-24);await createServiceEventRecord(token,{eventId,forkliftId:f.id,date,type:isPM?'PM':'Work Order / Hours',vendor,vendorPhone:'',workroom:f.workroom,reference:ref,hours,downtime:null,rentalRequired:false,description:isPM?'PM service document':'Work order / hour reading document',notes:formVal('wo-notes'),status:''},workOrderFile?[workOrderFile]:[]);if(isPM)await updateLastPMFromUpload(token,f,date);let txCreated=false,txSkipped=false;if(isPM&&amount!=null){if(!ref){if(!confirm('No invoice/work-order number is entered. Creating a transaction without a reference makes later duplicate matching less reliable. Create it anyway?'))throw new Error('Transaction creation cancelled because no reference was entered.');}if(ref&&transactionDocMatch(f.id,ref,amount)){txSkipped=true;}else{const txetype=await listEntityType(token,TX_LIST_API),txid=`PMUP-${f.id.replace('#','')}-${date.replaceAll('-','')}-${String(ref||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-18)}`;await createTransactionLine(token,txetype,{id:txid,forkliftId:f.id,date,workroom:f.workroom,reference:ref,amount,vendor,category:'PM Service',serviceCall:false,hours,downtime:null,rentalRequired:false,description:'PM invoice uploaded through Service / Hours',notes:`Service Event ID: ${eventId} | Uploaded PM document`,serviceEventId:eventId,rentalId:''});txCreated=true;}}closeWorkOrderModal();tokenCache=null;await loadData(true);let msg=`${isPM?'PM':'Service document'} saved successfully.`;if(hours!=null)msg+=` Hours updated to ${fmtNum(hours)}.`;if(txCreated)msg+=' PM transaction created.';if(txSkipped)msg+=' Matching PM transaction already existed, so no duplicate transaction was created.';alert(msg);}catch(e){console.error(e);alert('Could not save service document: '+e.message);}finally{btn.disabled=false;btn.textContent='Confirm & Save';}}
 
@@ -1539,7 +1539,7 @@ async function createRentalRecord(token,data){const et=await listEntityType(toke
 async function updatePrimaryVendorIfRequested(token,f,vendor,phone){if(!vendor||vendorMatches(vendor,f.serviceVendor))return;if(!confirm(`${vendor} does not match ${f.id}'s Primary Service Vendor${f.serviceVendor?` (${f.serviceVendor})`:''}.\n\nUpdate Primary Service Vendor to ${vendor}?`))return;const et=await getListItemType(token),body={__metadata:{type:et}},vi=fieldMap[normalizeLabel('Primary Service Vendor')],pi=fieldMap[normalizeLabel('Primary Service Vendor Phone')];if(vi)body[vi]=vendor;if(pi&&phone)body[pi]=phone;await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
 async function saveServiceEvent(){const f=fleet.find(x=>x.id===formVal('svc-forklift')),date=formVal('svc-date'),vendor=formVal('svc-vendor').trim(),phone=formVal('svc-vendor-phone').trim(),ref=formVal('svc-reference').trim(),hours=numOrNull(formVal('svc-hours')),lines=expenseLines(),rentalRequired=serviceMode==='Repair'&&document.getElementById('svc-rental-required').checked;if(!f||!date){alert('Forklift and Service Date are required.');return;}if(!confirm(`Save this ${serviceMode==='PM'?'PM':'repair'} event for ${f.id} · ${f.workroom}?`))return;const btn=document.getElementById('svc-save');btn.disabled=true;btn.textContent='Saving…';try{const token=await getToken(),eventId=`SE-${f.id.replace('#','')}-${date.replaceAll('-','')}-${Date.now()}`,files=[...document.getElementById('svc-files').files];await createServiceEventRecord(token,{eventId,forkliftId:f.id,date,type:serviceMode,vendor,vendorPhone:phone,workroom:f.workroom,reference:ref,hours,downtime:serviceMode==='Repair'?numOrNull(formVal('svc-downtime')):null,rentalRequired,description:formVal('svc-description'),notes:formVal('svc-notes'),status:formVal('svc-status-after')},files);const txetype=await listEntityType(token,TX_LIST_API);let serviceCallUsed=false;for(let i=0;i<lines.length;i++){const l=lines[i],isRental=l.type==='Rental',category=serviceMode==='PM'?'PM Service':(isRental?'Rental':'Repair / Expense'),serviceCall=serviceMode==='Repair'&&!isRental&&!serviceCallUsed;if(serviceCall)serviceCallUsed=true;await createTransactionLine(token,txetype,{id:`SVC-${eventId}-${String(i+1).padStart(2,'0')}`,forkliftId:f.id,date,workroom:f.workroom,reference:ref,amount:l.amount,vendor,category,serviceCall,hours,downtime:serviceMode==='Repair'?numOrNull(formVal('svc-downtime')):null,rentalRequired,description:`${l.type}${l.description?': '+l.description:''}`,notes:`Service Event ID: ${eventId} | Expense Type: ${l.type}${formVal('svc-notes')?' | '+formVal('svc-notes'):''}`,serviceEventId:eventId,rentalId:''});}
       if(hours!=null&&Number(hours)!==Number(f.hours)){await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:serviceMode,workroom:f.workroom,reference:ref,notes:`${serviceMode} service event ${eventId}`});}
-      if(serviceMode==='PM'){const et=await getListItemType(token),body={__metadata:{type:et}},li=fieldMap[normalizeLabel('Last PM Date')];if(li)body[li]=date+'T00:00:00Z';const pf=formVal('svc-pm-frequency').trim(),pfi=fieldMap[normalizeLabel('PM Frequency')];if(pfi&&pf)body[pfi]=pf;await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
+      if(serviceMode==='PM'){const et=await getListItemType(token),body={__metadata:{type:et}},li=fieldMap[normalizeLabel('Last PM Date')];if(li)body[li]=date+'T12:00:00Z';const pf=formVal('svc-pm-frequency').trim(),pfi=fieldMap[normalizeLabel('PM Frequency')];if(pfi&&pf)body[pfi]=pf;await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
       if(serviceMode==='Repair'&&formVal('svc-status-after')){const et=await getListItemType(token),body={__metadata:{type:et}},si=fieldMap[normalizeLabel('Status')];if(si)body[si]=formVal('svc-status-after');await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});}
       if(rentalRequired){const rentalId=`RNT-${f.id.replace('#','')}-${(formVal('svc-rental-start')||date).replaceAll('-','')}-${Date.now()}`,rentalLine=lines.find(x=>x.type==='Rental'&&x.amount!=null),cost=numOrNull(formVal('svc-rental-cost'))??rentalLine?.amount??null,start=formVal('svc-rental-start')||date,end=formVal('svc-rental-end'),rv=formVal('svc-rental-vendor').trim(),ri=formVal('svc-rental-invoice').trim(),status=cost==null?'Cost Pending':(end?'Closed':'Open');await createRentalRecord(token,{rentalId,forkliftId:f.id,workroom:f.workroom,vendor:rv,startDate:start,endDate:end,cost,invoice:ri,status,serviceEventId:eventId,notes:formVal('svc-rental-notes')});if(cost!=null&&!rentalLine){await createTransactionLine(token,txetype,{id:`RNT-${rentalId}`,forkliftId:f.id,date:end||start,workroom:f.workroom,reference:ri,amount:cost,vendor:rv,category:'Rental',serviceCall:false,hours:null,downtime:null,rentalRequired:true,description:'Rental expense',notes:`Rental ID: ${rentalId} | Service Event ID: ${eventId}`,serviceEventId:eventId,rentalId});}}
       await updatePrimaryVendorIfRequested(token,f,vendor,phone);closeServiceModal();tokenCache=null;await loadData(true);alert(`${serviceMode} event saved successfully.`);}catch(e){console.error(e);alert('Could not save service event: '+e.message);}finally{btn.disabled=false;btn.textContent='Save Service Event';}}
@@ -2344,11 +2344,11 @@ const pmBaseOpenForkliftModal=openForkliftModal;openForkliftModal=function(spId)
 function pmOpenHistory(fid){const f=fleet.find(x=>x.id===fid);if(!f)return;const d=pmDerivedMap.get(fid)||pmDerive(f);document.getElementById('pm-history-title').textContent=`${f.id} — ${f.workroom||''} PM History`;document.getElementById('pm-history-summary').innerHTML=`Observed Frequency: <strong>${esc(d.observedFrequency||'Unknown')}</strong> · Recommended: <strong>${esc(d.recommendedFrequency||'Unknown')}</strong> · Next Due: <strong>${fmtDate(d.nextPM)}</strong><br>${esc(d.right.reason||'')}`;document.getElementById('pm-history-table').innerHTML='<thead><tr><th>PM Date</th><th>Hours</th><th>Source</th><th>Vendor</th><th>Reference</th><th>Interval</th></tr></thead><tbody>'+d.visits.slice().reverse().map((v,ri,a)=>{const origIndex=d.visits.length-1-ri,prev=origIndex>0?d.visits[origIndex-1]:null,hrs=pmHoursAtVisit(fid,v);return `<tr><td>${fmtDate(v.date)}</td><td class="mono">${hrs==null?'—':fmtNum(hrs)}</td><td>${esc(v.source)}</td><td>${esc(v.vendor||'—')}</td><td class="mono">${esc(v.reference||'—')}</td><td class="mono">${prev?pmDateDiff(prev.date,v.date)+' days':'—'}</td></tr>`;}).join('')+(d.visits.length?'':'<tr><td colspan="6" class="empty">No PM history found</td></tr>')+'</tbody>';document.getElementById('pm-history-modal').classList.add('open');}
 function pmCloseHistory(){document.getElementById('pm-history-modal')?.classList.remove('open');}
 function pmRenderPage(){const t=document.getElementById('pm-page-table'),stats=document.getElementById('pm-page-stats');if(!t||!stats)return;const q=(formVal('pm-page-search')||'').toLowerCase(),filter=formVal('pm-page-status');const all=fleet.map(f=>({f,d:pmDerivedMap.get(f.id)||pmDerive(f),s:pmStatusFor(f)}));let rows=all.filter(r=>(!filter||r.s.label===filter)&&(!q||`${r.f.id} ${r.f.workroom} ${r.f.serviceVendor} ${r.d.observedFrequency} ${r.d.recommendedFrequency} ${r.s.label}`.toLowerCase().includes(q)));const operating=all.filter(r=>!['Retired','Sold','Scrapped'].includes(r.f.status)).length,on=all.filter(r=>r.s.label==='On Schedule').length,soon=all.filter(r=>r.s.label==='Due Soon').length,over=all.filter(r=>r.s.label==='Overdue').length,review=all.filter(r=>r.s.label==='Review Recommended').length,nohist=all.filter(r=>r.s.label==='No PM History').length;stats.innerHTML=`<div class="stat-card accent"><div class="stat-label">Operating Lifts</div><div class="stat-value">${operating}</div></div><div class="stat-card good"><div class="stat-label">On Schedule</div><div class="stat-value">${on}</div></div><div class="stat-card warn"><div class="stat-label">Due Soon</div><div class="stat-value">${soon}</div></div><div class="stat-card danger"><div class="stat-label">Overdue</div><div class="stat-value">${over}</div></div><div class="stat-card warn"><div class="stat-label">Frequency Review</div><div class="stat-value">${review}</div></div><div class="stat-card"><div class="stat-label">No PM History</div><div class="stat-value">${nohist}</div></div>`;const rank={'Overdue':0,'Due Soon':1,'Review Recommended':2,'No PM History':3,'On Schedule':4,'Parked — PM Paused':5,'Inactive':6};rows.sort((a,b)=>(rank[a.s.label]??9)-(rank[b.s.label]??9)||String(a.d.nextPM||'9999').localeCompare(String(b.d.nextPM||'9999'))||String(a.f.id).localeCompare(String(b.f.id),undefined,{numeric:true}));t.innerHTML='<thead><tr><th>Forklift</th><th>Workroom</th><th>Vendor</th><th>Last PM</th><th>Hours at Last PM</th><th>Observed Frequency</th><th>Recommended Frequency</th><th>Next PM Due</th><th>Status</th><th>Frequency Review</th><th>Why</th></tr></thead><tbody>'+rows.map(r=>{const srcCls=r.d.source==='Manual Confirmed'?'manual':r.d.source==='History Confirmed'?'confirmed':r.d.source==='Pattern Inferred'?'inferred':'',action=r.d.right.action,actionHtml=action==='Frequency Change Recommended'?`<span class="pm-rec-change">Change Recommended</span>`:action==='Set Recommended Frequency'?'<span class="pm-source inferred">Set Recommended</span>':'<span class="pm-rec-keep">Keep</span>';return `<tr class="fleet-row" ondblclick="pmOpenHistory('${esc(r.f.id)}')"><td class="mono"><strong>${esc(r.f.id)}</strong></td><td>${esc(r.f.workroom||'—')}</td><td>${esc(r.f.serviceVendor||'—')}</td><td>${fmtDate(r.d.lastPM)}</td><td class="mono">${r.d.lastHours==null?'—':fmtNum(r.d.lastHours)}</td><td>${esc(r.d.observedFrequency||'—')}<br><span class="pm-source ${srcCls}">${esc(r.d.source||'Unknown')}</span></td><td><strong>${esc(r.d.recommendedFrequency||'—')}</strong></td><td>${fmtDate(r.d.nextPM)}</td><td><span class="pm-status ${r.s.cls}">${esc(r.s.label)}</span></td><td>${actionHtml}</td><td class="pm-review">${esc(r.d.right.reason||'—')}</td></tr>`;}).join('')+(rows.length?'':'<tr><td colspan="11" class="empty">No PM records match</td></tr>')+'</tbody>';}
-async function pmWriteFleetSchedule(token,etype,f,d){const body={__metadata:{type:etype}},lastI=fieldMap[normalizeLabel('Last PM Date')],freqI=fieldMap[normalizeLabel('PM Frequency')],nextI=fieldMap[normalizeLabel('Next PM Due')],notesI=fieldMap[normalizeLabel('Notes')];if(lastI)body[lastI]=d.lastPM?d.lastPM+'T00:00:00Z':null;/* PM Frequency is the approved/current schedule. Automatic mode stores the right-sized recommendation so future workflow uses it. */if(freqI&&d.recommendedFrequency)body[freqI]=d.recommendedFrequency;if(nextI)body[nextI]=d.nextPM?d.nextPM+'T00:00:00Z':null;if(notesI&&d.mode==='auto')body[notesI]=pmFullNotes(f,'auto');const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error(`${f.id}: ${await r.text()}`);}
+async function pmWriteFleetSchedule(token,etype,f,d){const body={__metadata:{type:etype}},lastI=fieldMap[normalizeLabel('Last PM Date')],freqI=fieldMap[normalizeLabel('PM Frequency')],nextI=fieldMap[normalizeLabel('Next PM Due')],notesI=fieldMap[normalizeLabel('Notes')];if(lastI)body[lastI]=d.lastPM?d.lastPM+'T12:00:00Z':null;/* PM Frequency is the approved/current schedule. Automatic mode stores the right-sized recommendation so future workflow uses it. */if(freqI&&d.recommendedFrequency)body[freqI]=d.recommendedFrequency;if(nextI)body[nextI]=d.nextPM?d.nextPM+'T12:00:00Z':null;if(notesI&&d.mode==='auto')body[notesI]=pmFullNotes(f,'auto');const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error(`${f.id}: ${await r.text()}`);}
 async function pmAutoSync(){if(pmSyncBusy)return 0;pmSyncBusy=true;let changed=[];try{const token=await getToken(),etype=await getListItemType(token);for(const f of fleet){const d=pmDerivedMap.get(f.id)||pmDerive(f),snap=f._pmSnapshot||{lastPM:f.lastPM||'',pmFrequency:f.pmFrequency||'',nextPM:f.nextPM||'',mode:f.pmMode||'auto'};const desiredFreq=d.mode==='manual'?(f.pmFrequency||d.recommendedFrequency):d.recommendedFrequency;const need=snap.lastPM!==d.lastPM||snap.pmFrequency!==desiredFreq||snap.nextPM!==d.nextPM||(d.mode==='auto'&&snap.mode!=='auto');if(!need)continue;await pmWriteFleetSchedule(token,etype,f,d);changed.push(f.id);f._pmSnapshot={lastPM:d.lastPM,pmFrequency:desiredFreq,nextPM:d.nextPM,mode:d.mode};}return changed.length;}catch(e){console.error('PM schedule sync failed:',e);showError('PM data loaded, but one or more PM schedule fields could not sync to SharePoint: '+e.message);return changed.length;}finally{pmSyncBusy=false;}}
 async function pmManualSync(){pmRecalculate();pmRenderPage();const n=await pmAutoSync();pmRenderPage();alert(`PM data recalculated${n?` and ${n} forklift record${n===1?'':'s'} updated in SharePoint`:'. No SharePoint changes were needed'}.`);}
 const pmBaseSaveForklift=saveForklift;saveForklift=async function(){const f=fleet.find(x=>x.spId===editingForkliftSpId),notes=document.getElementById('ff-notes'),mode=formVal('ff-pm-control')||'auto';if(!f||!notes)return pmBaseSaveForklift();if(mode==='manual'&&!formVal('ff-pmfreq'))return alert('Choose a PM Frequency for Manual Confirmed scheduling.');const visible=notes.value,oldDisabled=document.getElementById('ff-pmfreq').disabled;document.getElementById('ff-pmfreq').disabled=false;if(mode==='auto'){const d=pmDerivedMap.get(f.id)||pmDerive(f);setFormVal('ff-pmfreq',d.recommendedFrequency||d.observedFrequency||'');setFormVal('ff-lastpm',d.lastPM||'');setFormVal('ff-nextpm',d.nextPM||'');}else{setFormVal('ff-nextpm',formVal('ff-lastpm')&&formVal('ff-pmfreq')?pmAddMonths(formVal('ff-lastpm'),pmMonthsForFrequency(formVal('ff-pmfreq'))):'');}notes.value=pmWithMode(visible,mode);try{return await pmBaseSaveForklift();}finally{notes.value=visible;document.getElementById('ff-pmfreq').disabled=oldDisabled;}};
-const pmBaseUpdateLastPMFromUpload=updateLastPMFromUpload;updateLastPMFromUpload=async function(token,f,date){const d=pmDerivedMap.get(f.id)||pmDerive(f),freq=d.recommendedFrequency||f.pmFrequency||'',lastI=fieldMap[normalizeLabel('Last PM Date')],nextI=fieldMap[normalizeLabel('Next PM Due')],body={__metadata:{type:await getListItemType(token)}};if(lastI)body[lastI]=date+'T00:00:00Z';if(nextI)body[nextI]=freq?pmAddMonths(date,pmMonthsForFrequency(freq))+'T00:00:00Z':null;const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Could not update PM schedule dates: '+await r.text());};
+const pmBaseUpdateLastPMFromUpload=updateLastPMFromUpload;updateLastPMFromUpload=async function(token,f,date){const d=pmDerivedMap.get(f.id)||pmDerive(f),freq=d.recommendedFrequency||f.pmFrequency||'',lastI=fieldMap[normalizeLabel('Last PM Date')],nextI=fieldMap[normalizeLabel('Next PM Due')],body={__metadata:{type:await getListItemType(token)}};if(lastI)body[lastI]=date+'T12:00:00Z';if(nextI)body[nextI]=freq?pmAddMonths(date,pmMonthsForFrequency(freq))+'T12:00:00Z':null;const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)throw new Error('Could not update PM schedule dates: '+await r.text());};
 
 /* Dashboard: PM intentionally removed. */
 const pmBaseGetAttention=getAttention;getAttention=function(f){return pmBaseGetAttention(f).filter(x=>!String(x.label||'').toLowerCase().startsWith('pm '));};
@@ -2521,9 +2521,9 @@ pmWriteFleetSchedule=async function(token,etype,f,d){
         freqI=fieldMap[normalizeLabel('PM Frequency')],
         nextI=fieldMap[normalizeLabel('Next PM Due')],
         notesI=fieldMap[normalizeLabel('Notes')];
-  if(lastI)body[lastI]=d.lastPM?d.lastPM+'T00:00:00Z':null;
+  if(lastI)body[lastI]=d.lastPM?d.lastPM+'T12:00:00Z':null;
   if(d.mode==='manual'&&freqI&&f.pmFrequency)body[freqI]=f.pmFrequency;
-  if(nextI)body[nextI]=d.nextPM?d.nextPM+'T00:00:00Z':null;
+  if(nextI)body[nextI]=d.nextPM?d.nextPM+'T12:00:00Z':null;
   if(notesI&&d.mode==='auto')body[notesI]=pmFullNotes(f,'auto');
   const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
   if(!r.ok)throw new Error(`${f.id}: ${await r.text()}`);
@@ -3807,6 +3807,448 @@ try{
 }catch(e){
   console.warn('Final service-call grading refresh skipped:', e);
 }
+</script>
+
+
+<script id="full-audit-consolidated-stabilization-20261001">
+/* =====================================================================
+   FORKLIFT MANAGER — FULL AUDIT CONSOLIDATED STABILIZATION
+   Version: 2026-10-01-full-audit-v1
+
+   Goals:
+   - Date-only SharePoint writes use noon UTC.
+   - Transaction category has a canonical Notes fallback.
+   - Service Call hard rule is enforced centrally:
+       same forklift + same calendar date = max 1 counted repair call.
+   - Repair Case updates explicitly distinguish new call vs follow-up.
+   - PM auto mode stores the right-sized recommendation; manual stays manual.
+   - Dashboard treats missing/undated hour history as an attention item.
+   - Budget Forecast History refreshes when the forecast basis changes.
+   - Replacement Planning post-MLER service calls are date de-duplicated.
+   - Empty legacy Service Event shell rows are hidden from document history.
+   ===================================================================== */
+window.FM_STABILIZATION_VERSION='2026-10-01-full-audit-v1';
+
+/* -------------------- DATE-ONLY WRITES -------------------- */
+spDateOrNull=function(v){return v?v+'T12:00:00Z':null;};
+
+updateFleetHours=async function(token,f,hours,date){
+  const old=Number(f.hours||0),next=Number(hours);
+  if(!Number.isFinite(next))return;
+  if(next<old&&!confirm(`The new reading (${next.toLocaleString()}) is LOWER than the current reading (${old.toLocaleString()}) for ${f.id}. Save it anyway?`))
+    throw new Error('Hour update cancelled.');
+  const et=await getListItemType(token),body={__metadata:{type:et}};
+  const hi=fieldMap[normalizeLabel('Current Hours')],di=fieldMap[normalizeLabel('Hours Updated')];
+  if(hi)body[hi]=next;
+  if(di)body[di]=(date||todayISO())+'T12:00:00Z';
+  const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{
+    method:'POST',
+    headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok)throw new Error('Current Hours update failed: '+await r.text());
+};
+
+updateLastPMFromUpload=async function(token,f,date){
+  const d=pmDerivedMap.get(f.id)||pmDerive(f),
+        freq=d.recommendedFrequency||f.pmFrequency||'',
+        lastI=fieldMap[normalizeLabel('Last PM Date')],
+        nextI=fieldMap[normalizeLabel('Next PM Due')],
+        body={__metadata:{type:await getListItemType(token)}};
+  if(lastI)body[lastI]=date+'T12:00:00Z';
+  if(nextI)body[nextI]=freq?pmAddMonths(date,pmMonthsForFrequency(freq))+'T12:00:00Z':null;
+  const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{
+    method:'POST',
+    headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok)throw new Error('Could not update PM schedule dates: '+await r.text());
+};
+
+/* -------------------- CANONICAL TRANSACTION CATEGORY -------------------- */
+function fmCategoryFromNotes(raw){
+  const m=String(raw||'').match(/\[\[TX_CATEGORY:([^\]]+)\]\]/i);
+  return m?m[1].trim():'';
+}
+function fmCleanCategoryTag(raw){
+  return String(raw||'')
+    .replace(/\s*\|?\s*\[\[TX_CATEGORY:[^\]]+\]\]/ig,'')
+    .replace(/^\s*\|\s*|\s*\|\s*$/g,'')
+    .replace(/\s*\|\s*\|\s*/g,' | ')
+    .trim();
+}
+function fmWithCategoryTag(raw,category){
+  const clean=fmCleanCategoryTag(raw);
+  const c=String(category||'').trim();
+  return [clean,c?`[[TX_CATEGORY:${c}]]`:''].filter(Boolean).join(' | ');
+}
+function fmCanonicalCategory(t){
+  const tagged=t?.canonicalCategory||fmCategoryFromNotes(t?.notes);
+  if(tagged)return tagged;
+  const c=String(t?.category||'').trim();
+  if(c)return c;
+  return '';
+}
+
+const fmBaseMapTransaction=mapTransaction;
+mapTransaction=function(i){
+  const t=fmBaseMapTransaction(i);
+  const raw=String(t.notes||'');
+  t.canonicalCategory=fmCategoryFromNotes(raw);
+  t.notes=fmCleanCategoryTag(raw);
+  return t;
+};
+
+const fmBaseIsPM=isPM;
+isPM=function(t,pmSet=null){
+  const c=fmCanonicalCategory(t).toLowerCase();
+  if(c.includes('pm'))return true;
+  if(c.includes('rental')||c.includes('repair'))return false;
+  return fmBaseIsPM(t,pmSet);
+};
+
+const fmBaseIsRentalTx=isRentalTx;
+isRentalTx=function(t){
+  const c=fmCanonicalCategory(t).toLowerCase();
+  if(c.includes('rental'))return true;
+  if(c.includes('pm')||c.includes('repair'))return false;
+  return fmBaseIsRentalTx(t);
+};
+
+effectiveCategory=function(t,pmSet=null){
+  const c=fmCanonicalCategory(t);
+  if(c)return c;
+  if(isRentalTx(t))return'Rental';
+  return isPM(t,pmSet)?'PM Service':'Repair / Expense';
+};
+
+function fmAssignCategory(body,category){
+  const desired=String(category||'').trim();
+  if(!desired)return;
+  const meta=txMeta('Category'),internal=txInternal('Category');
+  if(!internal)return;
+  if(meta?.TypeAsString==='Choice'){
+    const choices=meta.Choices?.results||[];
+    const aliases={
+      'PM Service':['PM Service','PM','Preventive Maintenance'],
+      'Repair / Expense':['Repair / Expense','Repair','Repair Expense','Service / Repair'],
+      'Rental':['Rental','Forklift Rental']
+    }[desired]||[desired];
+    const match=choices.find(x=>aliases.some(a=>String(x).toLowerCase()===String(a).toLowerCase()));
+    if(match)body[internal]=match;
+    else if(meta.FillInChoice)body[internal]=desired;
+  }else{
+    body[internal]=desired;
+  }
+}
+
+/* -------------------- SERVICE CALL HARD RULE -------------------- */
+const fmReservedDailyServiceCalls=new Set();
+
+function fmDailyServiceKey(fid,date){return `${String(fid||'').trim()}|${String(date||'').slice(0,10)}`;}
+function fmExistingDailyServiceCall(fid,date,excludeSpId=null){
+  const key=fmDailyServiceKey(fid,date);
+  return transactions.find(t=>
+    fmDailyServiceKey(t.forkliftId,t.transactionDate)===key &&
+    t.serviceCall &&
+    !isPM(t,pmGroupSet()) &&
+    !isRentalTx(t) &&
+    (excludeSpId==null||Number(t.spId)!==Number(excludeSpId))
+  )||null;
+}
+function fmCanCountServiceCall(fid,date,excludeSpId=null){
+  const key=fmDailyServiceKey(fid,date);
+  return !fmExistingDailyServiceCall(fid,date,excludeSpId) &&
+    (!fmReservedDailyServiceCalls.has(key)||excludeSpId!=null);
+}
+
+const fmBaseCreateTransactionLine=createTransactionLine;
+createTransactionLine=async function(token,etype,data){
+  data=data||{};
+  const category=String(data.category||'').trim();
+  if(category==='PM Service'||category==='Rental'){
+    data.serviceCall=false;
+  }else if(category==='Repair / Expense'&&data.serviceCall){
+    const key=fmDailyServiceKey(data.forkliftId,data.date);
+    if(!fmCanCountServiceCall(data.forkliftId,data.date)){
+      console.warn('Service Call changed to No: same forklift/date already has a counted call.',data.forkliftId,data.date);
+      data.serviceCall=false;
+    }else{
+      fmReservedDailyServiceCalls.add(key);
+    }
+  }
+  data.notes=fmWithCategoryTag(data.notes,category);
+  try{
+    return await fmBaseCreateTransactionLine(token,etype,data);
+  }finally{
+    if(category==='Repair / Expense'&&data.serviceCall)
+      fmReservedDailyServiceCalls.delete(fmDailyServiceKey(data.forkliftId,data.date));
+  }
+};
+
+const fmBaseUpdateMatchingTransaction=updateMatchingTransactionFromServiceDocument;
+updateMatchingTransactionFromServiceDocument=async function(token,t,data){
+  data=data||{};
+  const category=String(data.category||'').trim();
+  if(category==='PM Service'||category==='Rental')data.serviceCall=false;
+  else if(category==='Repair / Expense'&&data.serviceCall&&!fmCanCountServiceCall(t.forkliftId,t.transactionDate,t.spId))
+    data.serviceCall=false;
+
+  // The existing routine writes Category and Notes; use its behavior, then
+  // ensure the canonical category marker is persisted even if SharePoint's
+  // Choice column rejects the visible label.
+  await fmBaseUpdateMatchingTransaction(token,t,data);
+
+  const li=await fetch(TX_LIST_API+'?$select=ListItemEntityTypeFullName',{
+    headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}
+  }).then(r=>r.json());
+  const body={__metadata:{type:li.d.ListItemEntityTypeFullName}};
+  fmAssignCategory(body,category);
+  assignTx(body,'Notes',fmWithCategoryTag(
+    appendUniqueNote(t.notes,`Service Event ID: ${data.serviceEventId} | Uploaded service document`),
+    category
+  ));
+  assignTx(body,'Service Call',!!data.serviceCall);
+  const r=await fetch(TX_ITEMS_API+`(${t.spId})`,{
+    method:'POST',
+    headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok)throw new Error('Canonical transaction update failed: '+await r.text());
+};
+
+const fmBaseSaveTransactionEdit=saveTransactionEdit;
+saveTransactionEdit=async function(){
+  const t=transactions.find(x=>x.spId===editingTransactionSpId);
+  if(!t)return fmBaseSaveTransactionEdit();
+  const category=formVal('txe-category').trim();
+  const date=formVal('txe-date'),fid=formVal('txe-forklift').trim();
+  const cb=document.getElementById('txe-service');
+
+  if(category==='PM Service'||category==='Rental'){
+    if(cb)cb.checked=false;
+  }else if(category==='Repair / Expense'&&cb?.checked){
+    const existing=fmExistingDailyServiceCall(fid,date,t.spId);
+    if(existing){
+      cb.checked=false;
+      alert(`Service Call was changed to No.\n\n${fid} already has a counted service call on ${fmtDate(date)}${existing.invoiceNumber?` (${existing.invoiceNumber})`:''}.\n\nRule: same forklift + same calendar date = maximum one service call.`);
+    }
+  }
+
+  const notes=document.getElementById('txe-notes'),visible=notes?.value||'';
+  if(notes)notes.value=fmWithCategoryTag(visible,category);
+  try{
+    return await fmBaseSaveTransactionEdit();
+  }finally{
+    if(notes)notes.value=visible;
+  }
+};
+
+/* -------------------- REPAIR UPDATE: EXPLICIT CALL TREATMENT -------------------- */
+function fmInstallRepairUpdateCallUI(){
+  if(document.getElementById('ru-service-call-treatment'))return;
+  const lines=document.getElementById('ru-expense-lines');
+  if(!lines)return;
+  const group=document.createElement('div');
+  group.className='form-group full';
+  group.id='ru-service-call-treatment-wrap';
+  group.innerHTML=`
+    <label class="form-label">Service Call Treatment for Repair Expense</label>
+    <select class="form-input" id="ru-service-call-treatment">
+      <option value="new">Initial service / diagnostic dispatch — COUNT</option>
+      <option value="followup">Return / completion / parts installation / callback — DO NOT COUNT</option>
+      <option value="none">Expense / paperwork only — DO NOT COUNT</option>
+    </select>
+    <div class="muted" id="ru-service-call-treatment-help" style="font-size:9px;margin-top:4px;line-height:1.4">
+      Same forklift + same calendar date can never count more than once.
+    </div>`;
+  lines.parentElement?.insertAdjacentElement('afterend',group);
+}
+function fmRepairCaseAlreadyHasCall(caseId){
+  const needle=`repair case id: ${String(caseId||'').toLowerCase()}`;
+  return transactions.some(t=>t.serviceCall&&!isPM(t,pmGroupSet())&&!isRentalTx(t)&&String(t.notes||'').toLowerCase().includes(needle));
+}
+const fmBaseOpenRepairUpdateModal=openRepairUpdateModal;
+openRepairUpdateModal=function(caseId){
+  const r=fmBaseOpenRepairUpdateModal(caseId);
+  fmInstallRepairUpdateCallUI();
+  const c=repairCaseById(caseId),sel=document.getElementById('ru-service-call-treatment'),help=document.getElementById('ru-service-call-treatment-help');
+  if(sel){
+    sel.value=fmRepairCaseAlreadyHasCall(caseId)?'followup':'new';
+    if(help&&c){
+      help.textContent=fmRepairCaseAlreadyHasCall(caseId)
+        ?'This repair case already has a counted service call. Defaulting this update to follow-up/completion = No.'
+        :'No counted service call is linked to this repair case yet. Count only if this update is the initial vendor dispatch.';
+    }
+  }
+  return r;
+};
+
+const fmBaseSaveRepairUpdate=saveRepairUpdate;
+saveRepairUpdate=async function(){
+  fmInstallRepairUpdateCallUI();
+  const treatment=formVal('ru-service-call-treatment')||'followup';
+  const wantCount=treatment==='new';
+  const original=createTransactionLine;
+  createTransactionLine=async function(token,etype,data){
+    if(data?.category==='Repair / Expense')data.serviceCall=wantCount&&!!data.serviceCall;
+    return original(token,etype,data);
+  };
+  try{
+    return await fmBaseSaveRepairUpdate();
+  }finally{
+    createTransactionLine=original;
+  }
+};
+
+/* -------------------- PM SCHEDULE SYNC -------------------- */
+pmWriteFleetSchedule=async function(token,etype,f,d){
+  const body={__metadata:{type:etype}},
+        lastI=fieldMap[normalizeLabel('Last PM Date')],
+        freqI=fieldMap[normalizeLabel('PM Frequency')],
+        nextI=fieldMap[normalizeLabel('Next PM Due')],
+        notesI=fieldMap[normalizeLabel('Notes')];
+
+  if(lastI)body[lastI]=d.lastPM?d.lastPM+'T12:00:00Z':null;
+
+  // User-approved behavior: automatic schedules store the current right-sized
+  // recommendation; manually confirmed schedules stay user-controlled.
+  if(freqI){
+    if(d.mode==='manual'&&f.pmFrequency)body[freqI]=f.pmFrequency;
+    else if(d.recommendedFrequency)body[freqI]=d.recommendedFrequency;
+  }
+
+  if(nextI)body[nextI]=d.nextPM?d.nextPM+'T12:00:00Z':null;
+  if(notesI&&d.mode==='auto')body[notesI]=pmFullNotes(f,'auto');
+
+  const r=await fetch(SP_ITEMS_API+`(${f.spId})`,{
+    method:'POST',
+    headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok)throw new Error(`${f.id}: ${await r.text()}`);
+};
+
+/* -------------------- DASHBOARD HOURS INTEGRITY -------------------- */
+const fmBaseGetAttention=getAttention;
+getAttention=function(f){
+  const out=fmBaseGetAttention(f);
+  if(['Retired','Sold','Scrapped'].includes(f.status))return out;
+  const hasHours=f.hours!==null&&f.hours!==undefined&&f.hours!=='';
+  if(!hasHours&&!out.some(x=>x.label==='Hours missing'))
+    out.push({level:'warn',label:'Hours missing',detail:'No current meter'});
+  else if(hasHours&&!f.hoursUpdated&&!out.some(x=>x.label==='Hours date missing'))
+    out.push({level:'warn',label:'Hours date missing',detail:'Update meter date'});
+  return out;
+};
+
+const fmBaseRenderStats=renderStats;
+renderStats=function(){
+  fmBaseRenderStats();
+  const card=[...document.querySelectorAll('#stats-row .stat-card')]
+    .find(x=>/Hours/i.test(x.querySelector('.stat-label')?.textContent||''));
+  if(card){
+    const operating=fleet.filter(f=>!['Retired','Sold','Scrapped'].includes(f.status));
+    const bad=operating.filter(f=>{
+      if(f.hours===null||f.hours===undefined||f.hours==='')return true;
+      if(!f.hoursUpdated)return true;
+      const d=daysSince(f.hoursUpdated);
+      return d!==null&&d>90;
+    }).length;
+    card.classList.toggle('warn',bad>0);
+    card.querySelector('.stat-label').textContent='Hours Missing / >90 Days';
+    card.querySelector('.stat-value').textContent=bad;
+    card.querySelector('.stat-sub').textContent='Missing, undated, or stale meter history';
+  }
+};
+
+/* -------------------- BUDGET FORECAST HISTORY BASIS -------------------- */
+budgetSyncAutoForecasts=async function(token){
+  if(budgetSyncInProgress||!budgetHistoryFieldMap[normalizeLabel('Forecast Amount')])return;
+  budgetSyncInProgress=true;
+  try{
+    const forecasts=budgetAllForecasts();
+    await scRetireStaleForecastHistory(token,forecasts);
+
+    for(const f of forecasts){
+      const cur=[...budgetHistory]
+        .filter(h=>h.isCurrent&&h.sourceType===f.sourceType&&h.sourceRecordId===String(f.sourceId))
+        .sort((a,b)=>String(b.forecastDate).localeCompare(String(a.forecastDate))||b.spId-a.spId)[0];
+
+      if(cur?.autoManual==='Manual Override')continue;
+
+      const p=budgetYMParts(f.ym),
+            currentBasis=String(cur?.notes||'').trim(),
+            newBasis=String(f.basis||'').trim();
+
+      if(!cur||
+         Math.abs(Number(cur.amount)-Number(f.amount))>.01||
+         cur.year!==p.year||
+         cur.monthNumber!==p.month||
+         cur.confidence!==f.confidence||
+         String(cur.repairStatus||'')!==String(f.status||'')||
+         currentBasis!==newBasis){
+        await budgetWriteForecastHistory(token,{...f,autoManual:'Auto'});
+      }
+    }
+  }catch(e){
+    console.warn('Auto forecast sync skipped:',e);
+  }finally{
+    budgetSyncInProgress=false;
+  }
+};
+
+/* -------------------- REPLACEMENT PLANNING: UNIQUE CALL DATES -------------------- */
+rpPostMLER=function(m,mler){
+  if(!mler)return {repair:0,calls:0};
+  let repair=0;
+  const callDates=new Set();
+  for(const t of m.rows){
+    if(!t.transactionDate||t.transactionDate<=mler.transactionDate||isPM(t)||isRentalTx(t))continue;
+    repair+=Number(t.amount||0);
+    if(t.serviceCall)callDates.add(t.transactionDate);
+  }
+  return {repair,calls:callDates.size};
+};
+
+/* -------------------- EMPTY LEGACY SERVICE SHELLS -------------------- */
+function fmMeaningfulServiceEvent(e){
+  return !!(String(e?.forkliftId||'').trim()||
+            String(e?.serviceDate||'').trim()||
+            String(e?.serviceType||'').trim()||
+            String(e?.description||'').trim()||
+            String(e?.notes||'').trim());
+}
+const fmBaseRenderServiceDocumentHistory=renderServiceDocumentHistory;
+renderServiceDocumentHistory=function(){
+  const original=serviceEvents;
+  try{
+    serviceEvents=original.filter(fmMeaningfulServiceEvent);
+    return fmBaseRenderServiceDocumentHistory();
+  }finally{
+    serviceEvents=original;
+  }
+};
+
+/* -------------------- HELP TEXT / VERSION -------------------- */
+(function(){
+  const serviceHelp=[...document.querySelectorAll('.help-topic summary')]
+    .find(x=>x.textContent.trim()==='What exactly counts as a Service Call?')
+    ?.parentElement?.querySelector('.help-body');
+  if(serviceHelp){
+    serviceHelp.innerHTML=`
+      <p>A <b>Service Call</b> is the initial vendor dispatch/diagnostic visit for a repair incident.</p>
+      <p><b>Hard daily rule:</b> the same forklift can count a maximum of <b>one Service Call per calendar date</b>, regardless of invoice count or accounting lines.</p>
+      <p>A return on a later date to complete the same repair, install parts, perform callback/rework, or finish previously diagnosed work remains <b>Service Call = No</b>. A genuinely new repair incident on a later date can count as a new call.</p>
+      <p><b>PMs and rental-only transactions are always No.</b> Work Order and Repair Case update workflows provide an explicit service-call treatment.</p>`;
+  }
+
+  const help=document.querySelector('#view-help .section-title');
+  if(help&&!document.getElementById('fm-build-version')){
+    help.insertAdjacentHTML('afterend',
+      '<div id="fm-build-version" class="muted" style="font-size:9px;margin-top:3px">Audit build: 2026-10-01-full-audit-v1</div>');
+  }
+})();
 </script>
 
 </body>
