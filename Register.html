@@ -4251,5 +4251,325 @@ renderServiceDocumentHistory=function(){
 })();
 </script>
 
+
+
+<script id="oct05-financial-workflow-revamp-v1">
+/* =====================================================================
+   OCT 5, 2026 — FINANCIAL WORKFLOW REVAMP v1
+
+   RULES
+   - NetSuite is the financial source of truth.
+   - Service Events / Repair Cases / Rentals track operational reality and
+     pending amounts during the month; they do NOT create accounting actuals.
+   - Forklift Transactions is the posted-accounting ledger.
+   - Prior months never add stale forecast exposure to final actuals.
+   - Reconciled forecasts remain in Forecast History for accuracy/audit, but
+     contribute $0 to active exposure.
+   ===================================================================== */
+window.FM_FINANCIAL_WORKFLOW_VERSION='2026-10-05-v1';
+const FM_FIN_CUTOVER_MONTH='2026-09';
+const FM_POSTED='Posted / Reconciled';
+const FM_INVOICE='Invoice Received';
+const FM_FORECAST='Forecast Only';
+const FM_CARRY='Carry Forward';
+const FM_NO_FIN='No Financial Impact';
+const FM_CANCELLED='Cancelled / No Charge';
+
+/* ---------- new SharePoint fields ---------- */
+const fmFinBaseMapTransaction=mapTransaction;
+mapTransaction=function(i){
+  const x=fmFinBaseMapTransaction(i);
+  x.sourceSystem=String(txv(i,'Source System')||'');
+  x.glAccount=String(txv(i,'GL Account')||'');
+  x.netSuitePeriod=String(txv(i,'NetSuite Period')||'');
+  x.reconciledOperationalRecord=String(txv(i,'Reconciled Operational Record')||'');
+  return x;
+};
+const fmFinBaseMapServiceEvent=mapServiceEvent;
+mapServiceEvent=function(i){
+  const x=fmFinBaseMapServiceEvent(i);
+  x.vendorInvoiceAmount=num(gv(i,serviceFieldMap,'Vendor Invoice Amount'));
+  x.accountingStatus=String(gv(i,serviceFieldMap,'Accounting Status')||'');
+  x.netSuiteDocument=String(gv(i,serviceFieldMap,'NetSuite Document Number')||'');
+  x.netSuitePostedAmount=num(gv(i,serviceFieldMap,'NetSuite Posted Amount'));
+  x.netSuitePostedDate=dateOnly(gv(i,serviceFieldMap,'NetSuite Posted Date'));
+  x.netSuitePostingMonth=String(gv(i,serviceFieldMap,'NetSuite Posting Month')||'');
+  x.reconciliationNotes=String(gv(i,serviceFieldMap,'Reconciliation Notes')||'');
+  return x;
+};
+const fmFinBaseMapRental=mapRental;
+mapRental=function(i){
+  const x=fmFinBaseMapRental(i);
+  x.accountingStatus=String(gv(i,rentalFieldMap,'Accounting Status')||'');
+  x.netSuiteDocument=String(gv(i,rentalFieldMap,'NetSuite Document Number')||'');
+  x.netSuitePostedAmount=num(gv(i,rentalFieldMap,'NetSuite Posted Amount'));
+  x.netSuitePostedDate=dateOnly(gv(i,rentalFieldMap,'NetSuite Posted Date'));
+  x.netSuitePostingMonth=String(gv(i,rentalFieldMap,'NetSuite Posting Month')||'');
+  x.reconciliationNotes=String(gv(i,rentalFieldMap,'Reconciliation Notes')||'');
+  return x;
+};
+const fmFinBaseBudgetMapHistory=budgetMapHistory;
+budgetMapHistory=function(i){
+  const x=fmFinBaseBudgetMapHistory(i);
+  x.forecastStatus=String(gv(i,budgetHistoryFieldMap,'Forecast Status')||'');
+  x.reconciledNetSuiteDocument=String(gv(i,budgetHistoryFieldMap,'Reconciled NetSuite Document')||'');
+  x.reconciledActualAmount=num(gv(i,budgetHistoryFieldMap,'Reconciled Actual Amount'));
+  return x;
+};
+
+function fmFinAuthority(t){
+  if(!t)return false;
+  const src=String(t.sourceSystem||'').trim().toLowerCase();
+  if(src==='netsuite'||src==='manual adjustment')return true;
+  if(src==='legacy operational')return false;
+  const id=String(t.transactionId||'').trim().toUpperCase();
+  const txt=[t.description,t.notes].join(' ');
+  if(/^(NS-|NSR-|HIST-)/.test(id))return true;
+  if(/NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(txt))return true;
+  const ym=String(t.transactionDate||'').slice(0,7);
+  // Older history predates the live operational-upload workflow and remains valid.
+  if(ym && ym<FM_FIN_CUTOVER_MONTH)return true;
+  return false;
+}
+function fmFinOperational(t){return !fmFinAuthority(t);}
+function fmFinUnresolvedStatus(s){
+  s=String(s||'').trim();
+  return ![FM_POSTED,FM_CANCELLED,FM_NO_FIN].includes(s);
+}
+function fmFinAccount(t){
+  if(String(t.glAccount||'')==='6023'||isRentalTx(t))return'6023';
+  return'6022';
+}
+
+/* Financial calculations use accounting-authority transactions only from cutover forward. */
+const fmFinBaseTxForForklift=txForForklift;
+txForForklift=function(fid){return fmFinBaseTxForForklift(fid).filter(fmFinAuthority);};
+budgetMonthActual=function(ym,account){
+  return transactions.filter(t=>fmFinAuthority(t)&&String(t.transactionDate||'').startsWith(ym)&&(account===BUDGET_ACCOUNT_6023?fmFinAccount(t)==='6023':fmFinAccount(t)==='6022')).reduce((s,t)=>s+Number(t.amount||0),0);
+};
+
+/* ---------- transaction writer: NetSuite metadata ---------- */
+createTransactionLine=async function(token,etype,data){
+  const body={__metadata:{type:etype},Title:data.id};
+  assignTx(body,'Forklift ID',data.forkliftId);assignTx(body,'Transaction Date',data.date+'T12:00:00Z');assignTx(body,'Workroom',data.workroom);assignTx(body,'Invoice Number',data.reference);assignTx(body,'Amount',data.amount);assignTx(body,'Vendor',data.vendor);assignTx(body,'Category',data.category);assignTx(body,'Service Call',data.serviceCall);assignTx(body,'Hour Meter',data.hours);assignTx(body,'Downtime Days',data.downtime);assignTx(body,'Rental Required',data.rentalRequired);assignTx(body,'Description',data.description);assignTx(body,'Notes',data.notes);assignTx(body,'Service Event ID',data.serviceEventId);assignTx(body,'Rental ID',data.rentalId);
+  const inferredNS=/^(NS-|NSR-)/i.test(String(data.id||''))||/NetSuite/i.test(String(data.description||'')+' '+String(data.notes||''));
+  assignTx(body,'Source System',data.sourceSystem||(inferredNS?'NetSuite':''));
+  assignTx(body,'GL Account',data.glAccount||(inferredNS?(data.category==='Rental'?'6023':'6022'):''));
+  assignTx(body,'NetSuite Period',data.netSuitePeriod||(inferredNS?String(data.date||'').slice(0,7):''));
+  assignTx(body,'Reconciled Operational Record',data.reconciledOperationalRecord||'');
+  const r=await fetch(TX_ITEMS_API,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('Transaction save failed: '+await r.text());
+  return (await r.json()).d;
+};
+
+async function fmFinPatchService(token,spId,values){
+  if(!spId)return;
+  const et=await listEntityType(token,SERVICE_LIST_API),body={__metadata:{type:et}};
+  for(const [k,v] of Object.entries(values))fieldAssign(body,serviceFieldMap,serviceFieldMeta,k,v);
+  const r=await fetch(SERVICE_LIST_API+`/items(${spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('Service Event financial-status update failed: '+await r.text());
+}
+async function fmFinPatchRental(token,spId,values){
+  if(!spId)return;
+  const et=await listEntityType(token,RENTAL_LIST_API),body={__metadata:{type:et}};
+  for(const [k,v] of Object.entries(values))fieldAssign(body,rentalFieldMap,rentalFieldMeta,k,v);
+  const r=await fetch(RENTAL_LIST_API+`/items(${spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('Rental financial-status update failed: '+await r.text());
+}
+
+/* ---------- Service / Work Order: operational only ---------- */
+function fmFinInstallWorkOrderUI(){
+  const tx=document.getElementById('wo-transaction-type');if(!tx)return;
+  const label=tx.closest('.form-group')?.querySelector('.form-label');if(label)label.textContent='Financial Classification';
+  [...tx.options].forEach(o=>{if(o.value==='Do Not Create Transaction')o.textContent='No Financial Amount';});
+  const preview=document.getElementById('wo-transaction-preview');
+  if(preview)preview.innerHTML='<b>Operational tracking only.</b> Any amount entered here is pending exposure until NetSuite posts it. No Forklift Transaction is created from this screen.';
+}
+const fmFinBaseOpenWorkOrderModal=openWorkOrderModal;
+openWorkOrderModal=function(selected=''){const r=fmFinBaseOpenWorkOrderModal(selected);fmFinInstallWorkOrderUI();return r;};
+
+saveWorkOrderHours=async function(){
+  fmFinInstallWorkOrderUI();
+  const fid=formVal('wo-forklift'),f=fleet.find(x=>x.id===fid),hours=numOrNull(formVal('wo-hours')),date=formVal('wo-date'),serial=formVal('wo-serial').trim(),ref=formVal('wo-reference').trim(),vendor=formVal('wo-vendor').trim(),amount=numOrNull(formVal('wo-amount')),isPM=document.getElementById('wo-is-pm').checked,finClass=formVal('wo-transaction-type')||'Do Not Create Transaction';
+  if(!f)return alert('Select the forklift.');if(!date)return alert('Service / Document Date is required.');
+  if(serial&&f.serial&&serial.toUpperCase()!==String(f.serial).toUpperCase()&&!confirm(`Detected serial ${serial} does not match ${f.id} serial ${f.serial}. Continue anyway?`))return;
+  let workroom=f.workroom;if(typeof lifeWorkroomOnDate==='function'){const hist=lifeWorkroomOnDate(f.id,date);if(hist)workroom=hist;}
+  const parts=[`Save operational document for ${f.id} · ${workroom}?`,`Date: ${fmtDate(date)}`,`Type: ${isPM?'PM':'Service / Work Order'}`,`Amount: ${amount==null?'None':fmtMoney(amount)}`];
+  if(amount!=null)parts.push('This amount will be tracked as PENDING only. NetSuite will create the financial actual.');
+  if(!confirm(parts.join('\n')))return;
+  const btn=document.getElementById('wo-save');btn.disabled=true;btn.textContent='Saving…';
+  try{
+    const token=await getToken();
+    if(hours!=null){await updateFleetHours(token,f,hours,date);await createHourReading(token,{forkliftId:f.id,date,hours,source:isPM?'PM':'Work Order',workroom,reference:ref,notes:[vendor?`Vendor: ${vendor}`:'',serial?`Serial: ${serial}`:'',formVal('wo-notes')].filter(Boolean).join(' | ')});}
+    const exact=typeof matchingServiceEventsForDocument==='function'?matchingServiceEventsForDocument(f.id,date,ref,isPM)[0]||null:null;
+    const pmRec=isPM&&typeof recommendedPMVisit==='function'?recommendedPMVisit(f.id,date,ref,vendor,hours):null;
+    const reused=exact||pmRec?.event||null;
+    const eventId=reused?.eventId||((isPM?'PM':'WO')+'-'+f.id.replace('#','')+'-'+date.replaceAll('-','')+'-'+String(ref||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-24));
+    const eventData={eventId,forkliftId:f.id,date,type:isPM?'PM':'Work Order / Hours',vendor,vendorPhone:'',workroom,reference:ref,hours,downtime:null,rentalRequired:finClass==='Rental',description:isPM?'PM service document':'Work order / service document',notes:formVal('wo-notes'),status:''};
+    let item;
+    if(typeof upsertServiceEventForDocument==='function')item=await upsertServiceEventForDocument(token,eventData,workOrderFile?[workOrderFile]:[]);
+    else item=await createServiceEventRecord(token,eventData,workOrderFile?[workOrderFile]:[]);
+    const spId=item?.Id||item?.spId||reused?.spId;
+    if(amount!=null){await fmFinPatchService(token,spId,{'Vendor Invoice Amount':amount,'Accounting Status':FM_INVOICE,'Reconciliation Notes':`Awaiting NetSuite posting${finClass&&finClass!=='Do Not Create Transaction'?' · '+finClass:''}`});}
+    else await fmFinPatchService(token,spId,{'Accounting Status':FM_NO_FIN});
+    if(isPM)await updateLastPMFromUpload(token,f,reused?.serviceDate||date);
+    closeWorkOrderModal();tokenCache=null;await loadData(true);
+    alert(`${isPM?'PM':'Service document'} saved. ${amount!=null?`${fmtMoney(amount)} is tracked as pending exposure; no accounting transaction was created.`:'No financial transaction was created.'}`);
+  }catch(e){console.error(e);alert('Could not save service document: '+e.message);}finally{btn.disabled=false;btn.textContent='Confirm & Save';}
+};
+
+/* ---------- Repair updates: keep all operational behavior, block accounting writes ---------- */
+const fmFinBaseSaveRepairUpdate=saveRepairUpdate;
+saveRepairUpdate=async function(){
+  const lines=typeof repairUpdateExpenseLines==='function'?repairUpdateExpenseLines():[];
+  const repairAmount=lines.filter(x=>x.type!=='Rental').reduce((s,x)=>s+Number(x.amount||0),0);
+  const rentalAmount=lines.filter(x=>x.type==='Rental').reduce((s,x)=>s+Number(x.amount||0),0);
+  const origTx=createTransactionLine,origService=createServiceEventRecord,origRental=createRentalRecord;
+  createTransactionLine=async()=>({Id:null,operationalOnly:true});
+  createServiceEventRecord=async function(token,data,files=[]){
+    const item=await origService(token,data,files);
+    if(repairAmount)await fmFinPatchService(token,item?.Id,{'Vendor Invoice Amount':repairAmount,'Accounting Status':FM_INVOICE,'Reconciliation Notes':'Repair update amount awaiting NetSuite posting'});
+    else await fmFinPatchService(token,item?.Id,{'Accounting Status':FM_NO_FIN});
+    return item;
+  };
+  createRentalRecord=async function(token,data){
+    const item=await origRental(token,data);
+    const amt=data.cost!=null?data.cost:rentalAmount||null;
+    if(amt!=null)await fmFinPatchRental(token,item?.Id,{'Accounting Status':FM_INVOICE,'Reconciliation Notes':'Rental amount awaiting NetSuite posting'});
+    return item;
+  };
+  try{return await fmFinBaseSaveRepairUpdate();}
+  finally{createTransactionLine=origTx;createServiceEventRecord=origService;createRentalRecord=origRental;}
+};
+
+/* ---------- Rental manager: cost is pending until NetSuite ---------- */
+saveRentalManager=async function(){
+  const r=rentals.find(x=>x.spId===Number(formVal('rm-spid')));if(!r)return alert('Rental record not found.');
+  const vendor=formVal('rm-vendor').trim(),status=formVal('rm-status'),costStatus=formVal('rm-cost-status'),start=formVal('rm-start'),end=formVal('rm-end'),ref=formVal('rm-invoice').trim(),cost=numOrNull(formVal('rm-cost')),notes=formVal('rm-notes').trim();
+  if(costStatus==='Complete'&&cost==null)return alert('A Complete cost status requires a rental cost.');
+  if(!confirm(`Save rental for ${r.forkliftId}?\nCost: ${cost==null?'Pending':fmtMoney(cost)}\n\n${cost!=null?'This will be pending exposure only. NetSuite will create the accounting actual.':'No accounting transaction will be created.'}`))return;
+  const btn=document.getElementById('rm-save');btn.disabled=true;btn.textContent='Saving…';
+  try{
+    const token=await getToken(),et=await listEntityType(token,RENTAL_LIST_API),body={__metadata:{type:et}};
+    for(const [l,v] of Object.entries({'Start Date':start,'End Date':end,'Vendor':vendor,'Cost':cost,'Cost Status':costStatus,'Invoice / Work Order':ref,'Notes':notes,'Status':status,'Accounting Status':cost!=null?FM_INVOICE:FM_FORECAST,'Reconciliation Notes':cost!=null?'Rental cost awaiting NetSuite posting':'Rental open; final cost not yet known'}))fieldAssign(body,rentalFieldMap,rentalFieldMeta,l,v);
+    const resp=await fetch(RENTAL_LIST_API+`/items(${r.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!resp.ok)throw new Error('Rental update failed: '+await resp.text());
+    if(rentalInvoiceFile){try{await uploadAttachment(token,RENTAL_LIST_API,r.spId,rentalInvoiceFile);}catch(e){alert('Rental was updated, but the invoice attachment could not be uploaded: '+e.message);}}
+    closeRentalManager();tokenCache=null;await loadData(true);alert(`Rental updated. ${cost!=null?`${fmtMoney(cost)} is pending exposure until NetSuite posts it.`:'No financial actual was created.'}`);
+  }catch(e){console.error(e);alert('Could not update rental: '+e.message);}finally{btn.disabled=false;btn.textContent='Save Rental / Record Cost';}
+};
+
+/* ---------- forecast drivers: known pending amount first, estimates second ---------- */
+function fmFinDriverYM(date){
+  const current=todayISO().slice(0,7),ym=String(date||'').slice(0,7);
+  if(!ym||ym<current)return current;
+  return ym;
+}
+function fmFinPendingServiceDrivers(){
+  return serviceEvents.filter(e=>Number(e.vendorInvoiceAmount)>0&&fmFinUnresolvedStatus(e.accountingStatus||FM_INVOICE)&&!lifeIsLifecycle?.(e)).map(e=>({
+    key:`pending-service:${e.spId}`,account:BUDGET_ACCOUNT_6022,type:'Invoice Received — Awaiting NetSuite',forecastType:'Pending Vendor Invoice',forkliftId:e.forkliftId,workroom:e.workroom,vendor:e.vendor,amount:Number(e.vendorInvoiceAmount),ym:fmFinDriverYM(e.serviceDate),confidence:'High',issue:'',status:e.accountingStatus||FM_INVOICE,sourceType:'Service Event',sourceId:e.eventId,basis:`Vendor document ${e.reference||e.eventId} · operational amount ${fmtMoney(e.vendorInvoiceAmount)} · awaiting NetSuite`,description:e.description||'',canOverride:false
+  }));
+}
+function fmFinPendingRentalDrivers(){
+  return rentals.filter(r=>Number(r.cost)>0&&fmFinUnresolvedStatus(r.accountingStatus||FM_INVOICE)).map(r=>({
+    key:`pending-rental:${r.spId}`,account:BUDGET_ACCOUNT_6023,type:'Rental Invoice — Awaiting NetSuite',forecastType:'Pending Rental Invoice',forkliftId:r.forkliftId,workroom:r.workroom,vendor:r.vendor,amount:Number(r.cost),ym:fmFinDriverYM(r.endDate||r.startDate),confidence:'High',issue:'',status:r.accountingStatus||FM_INVOICE,sourceType:'Rental',sourceId:r.rentalId,basis:`Rental ${r.invoice||r.rentalId} · operational amount ${fmtMoney(r.cost)} · awaiting NetSuite`,description:'Rental cost pending accounting',canOverride:false
+  }));
+}
+const fmFinBaseBudgetRepairForecasts=budgetRepairForecasts;
+const fmFinBaseBudgetPMForecasts=budgetPMForecasts;
+const fmFinBaseBudgetRentalForecasts=budgetRentalForecasts;
+budgetAllForecasts=function(){
+  const pendingS=fmFinPendingServiceDrivers(),pendingR=fmFinPendingRentalDrivers();
+  const repairCaseIds=new Set();
+  for(const e of serviceEvents){if(!(Number(e.vendorInvoiceAmount)>0&&fmFinUnresolvedStatus(e.accountingStatus||FM_INVOICE)))continue;const m=String(e.notes||'').match(/Repair Case ID:\s*([^|]+)/i);if(m)repairCaseIds.add(m[1].trim());}
+  const pendingPM=pendingS.filter(x=>serviceEvents.find(e=>e.eventId===x.sourceId&&String(e.serviceType).toLowerCase()==='pm'));
+  let repairs=fmFinBaseBudgetRepairForecasts().filter(x=>!repairCaseIds.has(String(x.sourceId||'')));
+  let pms=fmFinBaseBudgetPMForecasts().filter(x=>!pendingPM.some(p=>p.forkliftId===x.forkliftId&&Math.abs(new Date((serviceEvents.find(e=>e.eventId===p.sourceId)?.serviceDate||todayISO())+'T00:00:00')-new Date(String(x.sourceId||'').split(':').pop()+'T00:00:00'))/86400000<=60));
+  let rentalEst=fmFinBaseBudgetRentalForecasts().filter(x=>!pendingR.some(p=>p.forkliftId===x.forkliftId));
+  return [...pendingS,...pendingR,...repairs,...pms,...rentalEst];
+};
+
+/* Prior month = posted accounting actual only. Forecast history stays visible for accuracy. */
+const fmFinBaseBudgetSummary=budgetSummary;
+budgetSummary=function(ym){
+  const x=fmFinBaseBudgetSummary(ym);
+  if(budgetIsPrior(ym)){
+    x.f22=0;x.f23=0;x.projected22=x.a22;x.projected23=x.a23;x.remaining22=x.b22.amount-x.a22;x.remaining23=x.b23.amount-x.a23;x.risk22=budgetRisk(x.a22,x.b22.amount);x.risk23=budgetRisk(x.a23,x.b23.amount);x.drivers=[];
+  }
+  return x;
+};
+
+/* ---------- month tracker ---------- */
+const fmFinBaseRenderBudget=renderBudget;
+renderBudget=function(){
+  fmFinBaseRenderBudget();
+  const x=budgetSummary(budgetSelectedMonth),prior=budgetIsPrior(budgetSelectedMonth);
+  const note=document.getElementById('budget-context-note');
+  if(note)note.innerHTML=prior?'<b>Final accounting view.</b> Prior-month actuals are posted NetSuite transactions only. Historical forecasts remain below for accuracy review but add $0 to the month.':'<b>Month Tracker — In Progress.</b> Posted NetSuite actuals plus unresolved operational exposure. When NetSuite posts an item, its pending/forecast contribution becomes $0.';
+  document.querySelectorAll('#budget-account-grid .budget-line span').forEach(s=>{if(s.textContent.trim()==='Forecast Exposure')s.textContent='Known & Forecast Exposure';});
+  const driverPanel=document.getElementById('budget-driver-table')?.closest('.panel');
+  if(driverPanel){let tracker=document.getElementById('fm-month-tracker');if(!tracker){tracker=document.createElement('div');tracker.id='fm-month-tracker';tracker.className='panel';tracker.style.marginBottom='14px';driverPanel.insertAdjacentElement('beforebegin',tracker);}const d=x.drivers||[],pending=d.filter(z=>/^Invoice Received|^Rental Invoice/.test(z.type)),est=d.filter(z=>z.type==='Open Repair'||/repair/i.test(z.type)&&!/^Invoice/.test(z.type)),pm=d.filter(z=>/PM/.test(z.type)&&!/^Invoice/.test(z.type)),rent=d.filter(z=>z.account===BUDGET_ACCOUNT_6023);const sum=a=>a.reduce((s,z)=>s+Number(z.amount||0),0);tracker.innerHTML=`<div class="panel-head"><div class="panel-title">Month Tracker</div><span class="muted" style="font-size:10px">Operational amounts are pending until NetSuite posts them</span></div><div class="service-grid" style="padding:12px;margin-bottom:0"><div class="service-card"><div class="label">NetSuite Posted 6022</div><div class="value">${fmtMoney(x.a22)}</div><div class="sub">Accounting actual</div></div><div class="service-card"><div class="label">Invoices Awaiting NetSuite</div><div class="value">${fmtMoney(sum(pending.filter(z=>z.account===BUDGET_ACCOUNT_6022)))}</div><div class="sub">Known vendor amounts</div></div><div class="service-card"><div class="label">Open / Expected 6022</div><div class="value">${fmtMoney(Math.max(0,x.f22-sum(pending.filter(z=>z.account===BUDGET_ACCOUNT_6022))))}</div><div class="sub">Unresolved estimates + PM</div></div><div class="service-card"><div class="label">Rental Awaiting / Forecast</div><div class="value">${fmtMoney(x.f23)}</div><div class="sub">6023 operational exposure</div></div></div>`;}
+};
+
+/* ---------- NetSuite importer ignores operational rows when checking duplicates ---------- */
+const fmFinBaseNsRecalcGroup=nsRecalcGroup;
+nsRecalcGroup=function(g){const all=transactions;transactions=all.filter(fmFinAuthority);try{return fmFinBaseNsRecalcGroup(g);}finally{transactions=all;}};
+if(typeof nsExistingForDoc==='function'){
+  const fmFinBaseNsExistingForDoc=nsExistingForDoc;
+  nsExistingForDoc=function(g){return fmFinBaseNsExistingForDoc(g).filter(fmFinAuthority);};
+}
+
+async function fmFinRetireForecastHistory(token,{sourceType,sourceId,doc,actual,caseId,forkliftId,postingMonth}){
+  const matches=budgetHistory.filter(h=>h.isCurrent&&(
+    (sourceType&&h.sourceType===sourceType&&String(h.sourceRecordId)===String(sourceId))||
+    (caseId&&h.sourceType==='Repair Case'&&String(h.sourceRecordId)===String(caseId))||
+    (sourceType==='Service Event'&&/pm/i.test(String(sourceId||''))&&h.sourceType==='PM'&&h.forkliftId===forkliftId&&h.year===Number(postingMonth.slice(0,4))&&h.monthNumber===Number(postingMonth.slice(5,7)))
+  ));
+  if(!matches.length)return;
+  const et=await listEntityType(token,BUDGET_HISTORY_LIST_API);
+  for(const h of matches){const body={__metadata:{type:et}};fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Is Current Forecast',false);fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Forecast Status','Reconciled / Superseded');fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Reconciled NetSuite Document',doc);fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Reconciled Actual Amount',actual);const r=await fetch(BUDGET_HISTORY_LIST_API+`/items(${h.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)console.warn('Forecast history reconciliation failed',h.spId,await r.text());}
+}
+function fmFinBestServiceMatch(g){
+  const ref=String(g.invoiceNumber||'').trim().toUpperCase(),fid=g.forkliftId;
+  let c=serviceEvents.filter(e=>e.forkliftId===fid&&fmFinUnresolvedStatus(e.accountingStatus||FM_FORECAST));
+  let exact=c.filter(e=>ref&&String(e.reference||'').trim().toUpperCase()===ref);if(exact.length)return exact.sort((a,b)=>nsDateDelta(g.transactionDate,a.serviceDate)-nsDateDelta(g.transactionDate,b.serviceDate))[0];
+  c=c.filter(e=>nsDateDelta(g.transactionDate,e.serviceDate)<=45&&( !g.vendor||!e.vendor||vendorMatches(g.vendor,e.vendor) ));
+  return c.length===1?c[0]:null;
+}
+async function fmFinReconcileGroup(token,g){
+  const postingMonth=String(g.transactionDate||'').slice(0,7),actual=Number(g.total||0);
+  if(g.accountCode==='6023'){
+    const r=g.rentalMatch?.rental||rentals.find(x=>x.forkliftId===g.forkliftId&&String(x.invoice||'').trim().toUpperCase()===String(g.invoiceNumber||'').trim().toUpperCase());
+    if(r){await fmFinPatchRental(token,r.spId,{'Accounting Status':FM_POSTED,'NetSuite Document Number':g.invoiceNumber,'NetSuite Posted Amount':actual,'NetSuite Posted Date':g.transactionDate,'NetSuite Posting Month':postingMonth,'Reconciliation Notes':`Operational rental ${r.cost==null?'amount unknown':fmtMoney(r.cost)} reconciled to NetSuite ${fmtMoney(actual)}`});await fmFinRetireForecastHistory(token,{sourceType:'Rental',sourceId:r.rentalId,doc:g.invoiceNumber,actual,forkliftId:g.forkliftId,postingMonth});}
+    return;
+  }
+  const e=fmFinBestServiceMatch(g);if(!e)return;
+  const caseMatch=String(e.notes||'').match(/Repair Case ID:\s*([^|]+)/i),caseId=caseMatch?caseMatch[1].trim():'';
+  await fmFinPatchService(token,e.spId,{'Accounting Status':FM_POSTED,'NetSuite Document Number':g.invoiceNumber,'NetSuite Posted Amount':actual,'NetSuite Posted Date':g.transactionDate,'NetSuite Posting Month':postingMonth,'Reconciliation Notes':`Operational amount ${e.vendorInvoiceAmount==null?'unknown':fmtMoney(e.vendorInvoiceAmount)} reconciled to NetSuite ${fmtMoney(actual)}`});
+  await fmFinRetireForecastHistory(token,{sourceType:'Service Event',sourceId:e.eventId,caseId,doc:g.invoiceNumber,actual,forkliftId:g.forkliftId,postingMonth});
+}
+const fmFinBaseImportNetSuiteRows=importNetSuiteRows;
+importNetSuiteRows=async function(){
+  const approved=nsImportGroups.filter(g=>g.action==='import').map(g=>g);
+  await fmFinBaseImportNetSuiteRows();
+  if(!approved.length)return;
+  try{const token=await getToken();for(const g of approved)await fmFinReconcileGroup(token,g);tokenCache=null;await loadData(true);}catch(e){console.error('Operational reconciliation after NetSuite import failed:',e);alert('NetSuite transactions imported, but one or more operational records could not be auto-reconciled. The accounting actual is still preserved. See Console for details.');}
+};
+
+/* ---------- help / visible language ---------- */
+(function(){
+  fmFinInstallWorkOrderUI();
+  const txHelp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Transactions — financial master data')?.parentElement?.querySelector('.help-body');
+  if(txHelp)txHelp.innerHTML=`<p><b>Forklift Transactions is the posted accounting ledger.</b> Beginning with the financial-workflow cutover, normal operational screens do not create Transactions. NetSuite is the source of truth for actual spend.</p><p>During the month, vendor invoices, repair estimates, PMs, and rentals remain in Service Events / Repair Cases / Rentals as pending exposure. When NetSuite posts the charge, the month-end importer creates the Transaction and reconciles the operational record.</p><p>Historical operational-created transaction rows are retained for audit but are not treated as accounting authority after the cutover.</p>`;
+  const dupHelp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Avoiding duplicate expenses')?.parentElement?.querySelector('.help-body');
+  if(dupHelp)dupHelp.innerHTML=`<p><b>The new workflow avoids duplicates by design.</b> Service/PM/repair/rental screens track operational cost and pending exposure only. They do not write accounting Transactions.</p><p>The monthly NetSuite import is the only normal source of posted financial Transactions. Matching operational records are marked <b>Posted / Reconciled</b>; their pending forecast contribution becomes $0 while the original operational amount stays available for audit and forecast-accuracy review.</p>`;
+  const budgetHelp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.startsWith('Forklift Budget —'))?.parentElement?.querySelector('.help-body');
+  if(budgetHelp)budgetHelp.innerHTML=`<p><b>Accounting Actual = NetSuite-posted Transactions.</b> 6022 and 6023 remain separate.</p><p><b>Known & Forecast Exposure</b> comes from unresolved operational records: vendor invoices awaiting NetSuite, open repair estimates, expected PMs, and rentals. A known invoice amount replaces the related estimate where possible so both are not counted.</p><p>When NetSuite posts an expense, the related operational item becomes <b>Posted / Reconciled</b> and contributes $0 additional exposure. Prior months show final posted actual only; saved forecasts remain in Forecast History solely for accuracy/audit.</p>`;
+})();
+</script>
+<style id="oct05-financial-workflow-styles">
+#fm-month-tracker .service-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1100px){#fm-month-tracker .service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+
 </body>
 </html>
