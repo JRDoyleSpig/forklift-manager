@@ -4571,5 +4571,268 @@ importNetSuiteRows=async function(){
 @media(max-width:1100px){#fm-month-tracker .service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 
+
+<script id="oct06-financial-workflow-revamp-v2">
+/* =====================================================================
+   OCT 6, 2026 — FINANCIAL WORKFLOW REVAMP v2
+
+   GOAL
+   - Keep the live monthly guess visible.
+   - Use the strongest known value for each item:
+       estimate -> quote/known operational amount -> NetSuite actual.
+   - NetSuite remains the final accounting truth without destroying the
+     operational forecast trail that management needs during the month.
+   - Historical operational-created Transactions from the cutover month are
+     treated as operational evidence, not accounting actuals.
+   - Every forklift gets a live monthly financial tracker.
+   - Major tables get sorting and practical exports.
+   ===================================================================== */
+window.FM_FINANCIAL_WORKFLOW_VERSION='2026-10-06-v2';
+
+function fm2YM(v){return String(v||'').slice(0,7);}
+function fm2Date(v){return String(v||'').slice(0,10);}
+function fm2Doc(v){return String(v||'').trim().toUpperCase().replace(/\s+/g,'');}
+function fm2Key(fid,doc){return `${String(fid||'').trim()}|${fm2Doc(doc)}`;}
+function fm2NextYM(ym){const [y,m]=String(ym||todayISO().slice(0,7)).split('-').map(Number),d=new Date(y,m,1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
+function fm2DateDelta(a,b){if(!a||!b)return 9999;return Math.abs((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000);}
+function fm2DriverAccountCode(d){return String(d.account||'').startsWith('6023')?'6023':'6022';}
+function fm2DriverIsInvoice(d){return /invoice|awaiting netsuite|known operational/i.test(`${d.type||''} ${d.forecastType||''} ${d.basis||''}`);}
+function fm2DriverIsPM(d){return /\bPM\b|preventive/i.test(`${d.type||''} ${d.forecastType||''} ${d.sourceType||''} ${d.basis||''}`);}
+function fm2DriverIsRental(d){return fm2DriverAccountCode(d)==='6023'||/rental/i.test(`${d.type||''} ${d.forecastType||''} ${d.sourceType||''}`);}
+function fm2DriverIsRepair(d){return !fm2DriverIsPM(d)&&!fm2DriverIsRental(d)&&/repair|estimate|service/i.test(`${d.type||''} ${d.forecastType||''} ${d.sourceType||''} ${d.basis||''}`);}
+function fm2CaseIdFromNotes(notes){const m=String(notes||'').match(/Repair Case ID:\s*([^|]+)/i);return m?m[1].trim():'';}
+function fm2ServiceForEventId(id){return serviceEvents.find(e=>String(e.eventId||'')===String(id||''));}
+function fm2IsPostedStatus(s){return String(s||'').trim()===FM_POSTED;}
+function fm2IsCancelledStatus(s){return [FM_CANCELLED,FM_NO_FIN].includes(String(s||'').trim());}
+function fm2IsUnresolvedStatus(s){return !fm2IsPostedStatus(s)&&!fm2IsCancelledStatus(s);}
+
+/* ---------- posted accounting documents ---------- */
+function fm2ActualGroups(ym,fid=''){
+  const groups={};
+  transactions.filter(t=>fmFinAuthority(t)&&fm2YM(t.transactionDate)===ym&&(!fid||t.forkliftId===fid)).forEach(t=>{
+    const account=fmFinAccount(t),key=`${t.forkliftId}|${fm2Doc(t.invoiceNumber)||t.transactionId}|${account}`;
+    if(!groups[key])groups[key]={key,account,forkliftId:t.forkliftId,workroom:t.workroom,vendor:t.vendor,invoiceNumber:t.invoiceNumber,transactionDate:t.transactionDate,amount:0,rows:[],category:effectiveCategory(t,pmGroupSet())};
+    groups[key].amount+=Number(t.amount||0);groups[key].rows.push(t);
+    if(t.transactionDate>groups[key].transactionDate)groups[key].transactionDate=t.transactionDate;
+  });
+  return Object.values(groups);
+}
+function fm2ActualDocSet(ym){return new Set(fm2ActualGroups(ym).map(g=>fm2Key(g.forkliftId,g.invoiceNumber)));}
+
+/* ---------- all operational invoice evidence, including legacy rows ---------- */
+function fm2ServiceInvoiceEvidence(ym){
+  return serviceEvents.filter(e=>Number(e.vendorInvoiceAmount)>0&&fm2YM(e.serviceDate)===ym&&!lifeIsLifecycle?.(e)).map(e=>({
+    evidenceKey:`SE:${e.spId}`,docKey:fm2Key(e.forkliftId,e.reference),date:e.serviceDate,account:/rental/i.test(String(e.serviceType||''))?'6023':'6022',forkliftId:e.forkliftId,workroom:e.workroom,vendor:e.vendor,reference:e.reference,amount:Number(e.vendorInvoiceAmount),serviceEventId:e.eventId,caseId:fm2CaseIdFromNotes(e.notes),kind:String(e.serviceType||'').toLowerCase()==='pm'?'PM Invoice':'Vendor Invoice',accountingStatus:e.accountingStatus||FM_INVOICE,netSuiteAmount:e.netSuitePostedAmount,netSuiteDocument:e.netSuiteDocument,source:'Service Event'
+  }));
+}
+function fm2RentalInvoiceEvidence(ym){
+  return rentals.filter(r=>Number(r.cost)>0&&fm2YM(r.endDate||r.startDate)===ym).map(r=>({
+    evidenceKey:`RNT:${r.spId}`,docKey:fm2Key(r.forkliftId,r.invoice),date:r.endDate||r.startDate,account:'6023',forkliftId:r.forkliftId,workroom:r.workroom||fleet.find(f=>f.id===r.forkliftId)?.workroom||'',vendor:r.vendor,reference:r.invoice,amount:Number(r.cost),rentalId:r.rentalId,kind:'Rental Invoice',accountingStatus:r.accountingStatus||FM_INVOICE,netSuiteAmount:r.netSuitePostedAmount,netSuiteDocument:r.netSuiteDocument,source:'Rental'
+  }));
+}
+function fm2LegacyOperationalEvidence(ym){
+  const rows=transactions.filter(t=>fmFinOperational(t)&&fm2YM(t.transactionDate)===ym),groups={};
+  for(const t of rows){
+    const key=fm2Key(t.forkliftId,t.invoiceNumber)||`${t.forkliftId}|${t.transactionId}`;
+    if(!groups[key])groups[key]={evidenceKey:`LEG:${key}`,docKey:key,date:t.transactionDate,account:fmFinAccount(t),forkliftId:t.forkliftId,workroom:t.workroom,vendor:t.vendor,reference:t.invoiceNumber,amount:0,serviceEventId:t.serviceEventId||'',rentalId:t.rentalId||'',kind:isPM(t,pmGroupSet())?'PM Invoice':fmFinAccount(t)==='6023'?'Rental Invoice':'Vendor Invoice',accountingStatus:FM_INVOICE,source:'Legacy Operational Transaction',rows:[]};
+    groups[key].amount+=Number(t.amount||0);groups[key].rows.push(t);
+    if(t.transactionDate>groups[key].date)groups[key].date=t.transactionDate;
+  }
+  return Object.values(groups).map(g=>{const e=fm2ServiceForEventId(g.serviceEventId);if(e){g.caseId=fm2CaseIdFromNotes(e.notes);if(String(e.serviceType||'').toLowerCase()==='pm')g.kind='PM Invoice';if(e.accountingStatus)g.accountingStatus=e.accountingStatus;if(e.netSuitePostedAmount!=null)g.netSuiteAmount=e.netSuitePostedAmount;if(e.netSuiteDocument)g.netSuiteDocument=e.netSuiteDocument;}return g;});
+}
+function fm2CarryForwardEvidence(ym){
+  const out=[];
+  for(const e of serviceEvents.filter(e=>String(e.accountingStatus||'')===FM_CARRY&&Number(e.vendorInvoiceAmount)>0&&fm2YM(e.serviceDate)<ym)){out.push({evidenceKey:`SE:${e.spId}`,docKey:fm2Key(e.forkliftId,e.reference),date:e.serviceDate,account:/rental/i.test(String(e.serviceType||''))?'6023':'6022',forkliftId:e.forkliftId,workroom:e.workroom,vendor:e.vendor,reference:e.reference,amount:Number(e.vendorInvoiceAmount),serviceEventId:e.eventId,caseId:fm2CaseIdFromNotes(e.notes),kind:String(e.serviceType||'').toLowerCase()==='pm'?'PM Invoice':'Vendor Invoice',accountingStatus:FM_CARRY,netSuiteAmount:e.netSuitePostedAmount,netSuiteDocument:e.netSuiteDocument,source:'Service Event'});}
+  for(const r of rentals.filter(r=>String(r.accountingStatus||'')===FM_CARRY&&Number(r.cost)>0&&fm2YM(r.endDate||r.startDate)<ym)){out.push({evidenceKey:`RNT:${r.spId}`,docKey:fm2Key(r.forkliftId,r.invoice),date:r.endDate||r.startDate,account:'6023',forkliftId:r.forkliftId,workroom:r.workroom||fleet.find(f=>f.id===r.forkliftId)?.workroom||'',vendor:r.vendor,reference:r.invoice,amount:Number(r.cost),rentalId:r.rentalId,kind:'Rental Invoice',accountingStatus:FM_CARRY,netSuiteAmount:r.netSuitePostedAmount,netSuiteDocument:r.netSuiteDocument,source:'Rental'});}
+  return out;
+}
+function fm2OperationalEvidence(ym){
+  const actualSet=fm2ActualDocSet(ym),map=new Map();
+  // New structured operational records outrank legacy transaction evidence.
+  for(const e of [...fm2LegacyOperationalEvidence(ym),...fm2ServiceInvoiceEvidence(ym),...fm2RentalInvoiceEvidence(ym),...fm2CarryForwardEvidence(ym)]){
+    const k=e.docKey||e.evidenceKey,prev=map.get(k);
+    if(!prev||e.source!=='Legacy Operational Transaction')map.set(k,e);
+  }
+  return [...map.values()].map(e=>({...e,posted:actualSet.has(e.docKey)||fm2IsPostedStatus(e.accountingStatus)}));
+}
+
+/* ---------- strongest unresolved forecast for a month ---------- */
+function fm2HistoricalEstimateDrivers(ym){
+  if(!budgetIsPrior(ym))return [...fmFinBaseBudgetRepairForecasts(),...fmFinBaseBudgetPMForecasts(),...fmFinBaseBudgetRentalForecasts()].filter(x=>x.ym===ym);
+  return budgetHistoricalForecastDrivers(ym).filter(x=>!/^Pending /i.test(String(x.forecastType||''))&&!/Invoice Received/i.test(String(x.type||'')));
+}
+function fm2BestKnownForecasts(ym){
+  const evidence=fm2OperationalEvidence(ym),actuals=fm2ActualGroups(ym),actualKeys=new Set(actuals.map(a=>fm2Key(a.forkliftId,a.invoiceNumber)));
+  const pendingEvidence=evidence.filter(e=>!e.posted&&!fm2IsCancelledStatus(e.accountingStatus));
+  const out=[];
+  for(const e of pendingEvidence){
+    const carry=String(e.accountingStatus||'')===FM_CARRY;
+    const driverYM=carry?fm2NextYM(ym):ym;
+    out.push({key:`op:${e.evidenceKey}`,account:e.account==='6023'?BUDGET_ACCOUNT_6023:BUDGET_ACCOUNT_6022,type:`${e.kind} — Awaiting NetSuite`,forecastType:e.kind,forkliftId:e.forkliftId,workroom:e.workroom,vendor:e.vendor,amount:Number(e.amount||0),ym:driverYM,confidence:'High',issue:'',status:carry?FM_CARRY:(e.accountingStatus||FM_INVOICE),sourceType:e.source,sourceId:e.serviceEventId||e.rentalId||e.reference||e.evidenceKey,basis:`${e.kind} ${e.reference||''} · operational amount ${fmtMoney(e.amount)} · awaiting NetSuite`,description:'Operational amount awaiting accounting',reference:e.reference,date:e.date,caseId:e.caseId||'',canOverride:false});
+  }
+  const invoicesByFidType={};
+  for(const e of evidence){
+    const typ=e.account==='6023'?'rental':/pm/i.test(e.kind)?'pm':'repair';
+    (invoicesByFidType[`${e.forkliftId}|${typ}`]??=[]).push(e);
+  }
+  const actualByFidType={};
+  for(const a of actuals){
+    const typ=a.account==='6023'?'rental':/pm/i.test(String(a.category||''))?'pm':'repair';
+    (actualByFidType[`${a.forkliftId}|${typ}`]??=[]).push(a);
+  }
+  for(const d0 of fm2HistoricalEstimateDrivers(ym)){
+    const d={...d0}; if(d.ym&&d.ym!==ym)continue;
+    const typ=fm2DriverIsRental(d)?'rental':fm2DriverIsPM(d)?'pm':'repair';
+    const covered=(invoicesByFidType[`${d.forkliftId}|${typ}`]||[]).length||(actualByFidType[`${d.forkliftId}|${typ}`]||[]).length;
+    if(covered)continue; // stronger evidence replaces estimate; never add both.
+    if(String(d.forecastStatus||'')==='Reconciled / Superseded')continue;
+    d.reference=d.reference||d.sourceId||'';d.date=d.date||'';out.push(d);
+  }
+  // De-dupe exact driver keys after precedence logic.
+  const seen=new Set();return out.filter(d=>{const k=d.key||`${d.sourceType}|${d.sourceId}|${d.forkliftId}|${d.amount}`;if(seen.has(k))return false;seen.add(k);return true;});
+}
+
+/* ---------- budget summary always keeps the live guess ---------- */
+budgetAllForecasts=function(){const base=todayISO().slice(0,7),all=[];for(let i=0;i<12;i++){const ym=budgetShiftYM(base,i);all.push(...fm2BestKnownForecasts(ym).filter(x=>x.ym===ym));}return all;};
+budgetSummary=function(ym){
+  const b22=budgetMonthBudget(ym,BUDGET_ACCOUNT_6022),b23=budgetMonthBudget(ym,BUDGET_ACCOUNT_6023),a22=budgetMonthActual(ym,BUDGET_ACCOUNT_6022),a23=budgetMonthActual(ym,BUDGET_ACCOUNT_6023),fc=fm2BestKnownForecasts(ym).filter(x=>x.ym===ym),f22=fc.filter(x=>fm2DriverAccountCode(x)==='6022').reduce((s,x)=>s+Number(x.amount||0),0),f23=fc.filter(x=>fm2DriverAccountCode(x)==='6023').reduce((s,x)=>s+Number(x.amount||0),0),projected22=a22+f22,projected23=a23+f23;
+  return {ym,b22,b23,a22,a23,f22,f23,projected22,projected23,remaining22:b22.amount-projected22,remaining23:b23.amount-projected23,risk22:budgetRisk(projected22,b22.amount),risk23:budgetRisk(projected23,b23.amount),rentalActualsLoaded:budgetRentalActualsLoaded(),drivers:fc};
+};
+
+function fm2SnapshotRecord(ym,code){
+  const account=code==='6023'?BUDGET_ACCOUNT_6023:BUDGET_ACCOUNT_6022;
+  return [...budgetHistory].filter(h=>String(h.sourceRecordId||'')===`PRENS:${ym}:${code}`&&h.account===account).sort((a,b)=>String(b.forecastDate||'').localeCompare(String(a.forecastDate||''))||b.spId-a.spId)[0]||null;
+}
+function fm2LegacyExposureSnapshot(ym,code){
+  const account=code==='6023'?BUDGET_ACCOUNT_6023:BUDGET_ACCOUNT_6022;
+  return [...budgetHistory].filter(h=>h.forecastType==='Month-End Snapshot'&&h.snapshotMonth===ym&&h.account===account).sort((a,b)=>String(b.forecastDate||'').localeCompare(String(a.forecastDate||''))||b.spId-a.spId)[0]||null;
+}
+async function fm2EnsurePreNetSuiteSnapshots(){
+  const months=[...new Set((nsImportGroups||[]).filter(g=>g.action==='import').map(g=>fm2YM(g.transactionDate)).filter(Boolean))];if(!months.length)return;
+  const token=await getToken();
+  for(const ym of months){const x=budgetSummary(ym);for(const [code,account,amount] of [['6022',BUDGET_ACCOUNT_6022,x.projected22],['6023',BUDGET_ACCOUNT_6023,x.projected23]]){if(fm2SnapshotRecord(ym,code))continue;await budgetWriteForecastHistory(token,{sourceType:'Financial Workflow Snapshot',sourceId:`PRENS:${ym}:${code}`,account,amount,ym,confidence:'High',forecastType:'Pre-NetSuite Reconciliation',autoManual:'Auto',snapshotMonth:ym,notes:`Best-known projected month-end before final NetSuite reconciliation · ${code}`});}}
+  await loadBudgetData(token);
+}
+async function fm2CloseHistoricalForecastRows(token,ym){
+  const p=budgetYMParts(ym),rows=budgetHistory.filter(h=>h.year===p.year&&h.monthNumber===p.month&&h.isCurrent&&!['Month-End Snapshot','Pre-NetSuite Reconciliation','Month Close'].includes(String(h.forecastType||'')));
+  if(!rows.length)return;const et=await listEntityType(token,BUDGET_HISTORY_LIST_API);
+  for(const h of rows){const body={__metadata:{type:et}};fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Is Current Forecast',false);fieldAssign(body,budgetHistoryFieldMap,budgetHistoryFieldMeta,'Forecast Status','Month Finalized — Not Posted');const r=await fetch(BUDGET_HISTORY_LIST_API+`/items(${h.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});if(!r.ok)console.warn('Could not finalize forecast history row',h.spId,await r.text());}
+}
+async function fm2CarryUnpostedOperationalItems(token,ym){
+  const actualKeys=fm2ActualDocSet(ym),legacy=fm2LegacyOperationalEvidence(ym),structured=fm2OperationalEvidence(ym);
+  const serviceByKey=new Map(serviceEvents.filter(e=>fm2YM(e.serviceDate)===ym).map(e=>[fm2Key(e.forkliftId,e.reference),e]));
+  for(const e of legacy){if(actualKeys.has(e.docKey))continue;const svc=serviceByKey.get(e.docKey)||fm2ServiceForEventId(e.serviceEventId);if(svc&&!fm2IsPostedStatus(svc.accountingStatus)){await fmFinPatchService(token,svc.spId,{'Vendor Invoice Amount':e.amount,'Accounting Status':FM_CARRY,'Reconciliation Notes':`Not found in final ${ym} NetSuite import; carried forward to ${fm2NextYM(ym)}`});}}
+  for(const e of fm2ServiceInvoiceEvidence(ym)){if(actualKeys.has(e.docKey)||fm2IsPostedStatus(e.accountingStatus))continue;const svc=serviceEvents.find(x=>x.spId===Number(String(e.evidenceKey).replace('SE:','')));if(svc)await fmFinPatchService(token,svc.spId,{'Accounting Status':FM_CARRY,'Reconciliation Notes':`Not found in final ${ym} NetSuite import; carried forward to ${fm2NextYM(ym)}`});}
+  for(const e of fm2RentalInvoiceEvidence(ym)){if(actualKeys.has(e.docKey)||fm2IsPostedStatus(e.accountingStatus))continue;const rr=rentals.find(x=>x.spId===Number(String(e.evidenceKey).replace('RNT:','')));if(rr)await fmFinPatchRental(token,rr.spId,{'Accounting Status':FM_CARRY,'Reconciliation Notes':`Not found in final ${ym} NetSuite import; carried forward to ${fm2NextYM(ym)}`});}
+}
+async function fm2FinalizeImportedPastMonths(months){
+  const past=months.filter(ym=>ym<todayISO().slice(0,7));if(!past.length)return;const token=await getToken();
+  // Reload first so actual-document matching sees the just-imported NetSuite rows.
+  tokenCache=null;await loadData(true);
+  for(const ym of past){await fm2CarryUnpostedOperationalItems(token,ym);await fm2CloseHistoricalForecastRows(token,ym);}
+  tokenCache=null;await loadData(true);
+}
+const fm2BaseImportNetSuiteRows=importNetSuiteRows;
+importNetSuiteRows=async function(){
+  const months=[...new Set((nsImportGroups||[]).filter(g=>g.action==='import').map(g=>fm2YM(g.transactionDate)).filter(Boolean))];
+  try{await fm2EnsurePreNetSuiteSnapshots();}catch(e){console.error('Pre-NetSuite forecast snapshot failed:',e);if(!confirm('Could not save the pre-NetSuite forecast snapshot. Continue with the accounting import anyway?'))return;}
+  const result=await fm2BaseImportNetSuiteRows();
+  try{await fm2FinalizeImportedPastMonths(months);}catch(e){console.error('Month finalization/carry-forward failed:',e);alert('NetSuite was imported, but one or more unposted operational items could not be finalized/carried forward automatically. Accounting actual is preserved; review Month Tracker.');}
+  return result;
+};
+
+/* ---------- tracker rows ---------- */
+function fm2TrackerRows(ym,fid=''){
+  const evidence=fm2OperationalEvidence(ym),evMap=new Map(evidence.map(e=>[e.docKey,e])),rows=[];
+  for(const a of fm2ActualGroups(ym,fid)){
+    const e=evMap.get(fm2Key(a.forkliftId,a.invoiceNumber)),op=e?Number(e.amount||0):null,variance=op==null?null:Number(a.amount||0)-op;
+    rows.push({date:a.transactionDate,account:a.account,forkliftId:a.forkliftId,workroom:a.workroom,type:/pm/i.test(String(a.category||''))?'PM — NetSuite Actual':a.account==='6023'?'Rental — NetSuite Actual':'Repair / Expense — NetSuite Actual',vendor:a.vendor,operationalAmount:op,netSuiteAmount:Number(a.amount||0),currentExpected:Number(a.amount||0),status:FM_POSTED,variance,reference:a.invoiceNumber,basis:'NetSuite posted accounting actual',sortRank:0});
+  }
+  for(const d of fm2BestKnownForecasts(ym).filter(x=>x.ym===ym&&(!fid||x.forkliftId===fid))){
+    const invoice=fm2DriverIsInvoice(d),status=String(d.status||'')===FM_CARRY?FM_CARRY:(invoice?'Awaiting NetSuite':'Expected / Forecast');
+    rows.push({date:d.date||'',account:fm2DriverAccountCode(d),forkliftId:d.forkliftId,workroom:d.workroom,type:d.type||d.forecastType||'Forecast',vendor:d.vendor,operationalAmount:Number(d.amount||0),netSuiteAmount:null,currentExpected:Number(d.amount||0),status,variance:null,reference:d.reference||d.sourceId||'',basis:d.basis||d.description||'',sortRank:invoice?1:2});
+  }
+  return rows.sort((a,b)=>a.sortRank-b.sortRank||String(b.date||'').localeCompare(String(a.date||''))||String(a.forkliftId||'').localeCompare(String(b.forkliftId||''),undefined,{numeric:true}));
+}
+function fm2DriverBreakdown(x,code){
+  const d=(x.drivers||[]).filter(z=>fm2DriverAccountCode(z)===code),invoice=d.filter(fm2DriverIsInvoice),carry=d.filter(z=>String(z.status||'')===FM_CARRY),estimate=d.filter(z=>!fm2DriverIsInvoice(z)&&String(z.status||'')!==FM_CARRY);const sum=a=>a.reduce((s,z)=>s+Number(z.amount||0),0);return {invoice:sum(invoice),estimate:sum(estimate),carry:sum(carry)};
+}
+function fm2TrackerTableHTML(rows){
+  return `<thead><tr><th>Date</th><th>Account</th><th>Forklift</th><th>Workroom</th><th>Type / Basis</th><th>Vendor</th><th>Operational Amount</th><th>NetSuite Amount</th><th>Current Expected</th><th>Status</th><th>Variance</th><th>Reference</th><th>Detail</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${fmtDate(r.date)}</td><td>${esc(r.account)}</td><td class="mono">${esc(r.forkliftId||'—')}</td><td>${esc(r.workroom||'—')}</td><td>${esc(r.type||'—')}</td><td>${esc(r.vendor||'—')}</td><td class="mono">${r.operationalAmount==null?'—':fmtMoney(r.operationalAmount)}</td><td class="mono">${r.netSuiteAmount==null?'—':fmtMoney(r.netSuiteAmount)}</td><td class="mono"><strong>${fmtMoney(r.currentExpected||0)}</strong></td><td>${r.status===FM_POSTED?'<span class="closed-chip">Posted / Reconciled</span>':r.status===FM_CARRY?'<span class="pending-chip">Carry Forward</span>':r.status==='Awaiting NetSuite'?'<span class="pending-chip">Awaiting NetSuite</span>':'<span class="badge gray">Expected</span>'}</td><td class="mono">${r.variance==null?'—':fmtMoney(r.variance)}</td><td class="mono">${esc(r.reference||'—')}</td><td style="white-space:normal;min-width:260px">${esc(r.basis||'—')}</td></tr>`).join('')}${rows.length?'':'<tr><td colspan="13" class="empty">No financial items for this month</td></tr>'}</tbody>`;
+}
+
+/* ---------- budget UI ---------- */
+const fm2BaseRenderBudget=renderBudget;
+renderBudget=function(){
+  fm2BaseRenderBudget();
+  const x=budgetSummary(budgetSelectedMonth),prior=budgetIsPrior(budgetSelectedMonth),b22=fm2DriverBreakdown(x,'6022'),b23=fm2DriverBreakdown(x,'6023'),pre22=fm2SnapshotRecord(budgetSelectedMonth,'6022'),pre23=fm2SnapshotRecord(budgetSelectedMonth,'6023'),legacy22=fm2LegacyExposureSnapshot(budgetSelectedMonth,'6022');
+  const note=document.getElementById('budget-context-note');if(note)note.innerHTML=prior?'<b>Historical month — forecast AND final reality.</b> The page preserves the best-known operational guess while NetSuite progressively replaces estimates/invoices with posted actuals. Reconciled items are never counted twice.':'<b>Live month estimate.</b> NetSuite posted actuals plus the strongest unresolved operational amount (invoice first, then estimate/PM/rental forecast). As Accounting posts items, actual replaces forecast rather than adding to it.';
+  document.querySelectorAll('#budget-summary-grid .stat-label').forEach(el=>{if(el.textContent.trim()==='6022 Actual')el.textContent='6022 NetSuite Posted';if(el.textContent.trim()==='6023 Actual')el.textContent='6023 NetSuite Posted';});
+  const grid=document.getElementById('budget-account-grid');if(grid)grid.innerHTML=[['6022 Repair & Maintenance',x.b22.amount,x.a22,b22,x.projected22,x.remaining22,x.risk22],['6023 Forklift Rental',x.b23.amount,x.a23,b23,x.projected23,x.remaining23,x.risk23]].map(([title,budget,actual,bd,projected,remaining,risk])=>`<div class="budget-account"><h3>${title}</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(budget)}</strong></div><div class="budget-line"><span>NetSuite Posted</span><strong>${fmtMoney(actual)}</strong></div><div class="budget-line"><span>Invoices Awaiting NetSuite</span><strong>${fmtMoney(bd.invoice)}</strong></div><div class="budget-line"><span>Open Estimates / PM Forecasts</span><strong>${fmtMoney(bd.estimate)}</strong></div><div class="budget-line"><span>Carry-Forward Exposure</span><strong>${fmtMoney(bd.carry)}</strong></div><div class="budget-line"><span>Projected Month End</span><strong>${fmtMoney(projected)}</strong></div><div class="budget-line"><span>Remaining vs Budget</span><strong>${fmtMoney(remaining)}</strong></div><div class="budget-progress"><div class="${risk.bar}" style="width:${Math.min(100,risk.pct*100)}%"></div></div><span class="budget-risk ${risk.cls}">${risk.label}</span></div>`).join('');
+  const driverPanel=document.getElementById('budget-driver-table')?.closest('.panel');
+  if(driverPanel){let tracker=document.getElementById('fm-month-tracker');if(!tracker){tracker=document.createElement('div');tracker.id='fm-month-tracker';tracker.className='panel';tracker.style.marginBottom='14px';driverPanel.insertAdjacentElement('beforebegin',tracker);}const rows=fm2TrackerRows(budgetSelectedMonth),preText=(pre22||pre23)?`<div class="fm2-forecast-compare"><strong>Forecast captured before final NetSuite reconciliation:</strong> 6022 ${pre22?fmtMoney(pre22.amount):'—'} · 6023 ${pre23?fmtMoney(pre23.amount):'—'}${pre22?` · Current 6022 variance ${fmtMoney(x.a22-Number(pre22.amount||0))}`:''}</div>`:legacy22?`<div class="fm2-forecast-compare"><strong>Legacy month-end exposure snapshot:</strong> ${fmtMoney(legacy22.amount)}. This is retained for forecast-history context; the live tracker below reconstructs the best-known month estimate without double-counting invoices and estimates.</div>`:'';tracker.innerHTML=`<div class="panel-head"><div><div class="panel-title">Month Tracker — ${budgetMonthLabel(budgetSelectedMonth)}</div><div class="muted" style="font-size:10px;margin-top:3px">Estimate → vendor invoice → NetSuite actual. Only the strongest value for each item counts.</div></div><div><button class="btn" onclick="fm2ExportTableExcel('fm-month-tracker-table','Forklift_Month_Tracker_${budgetSelectedMonth}.xlsx','Month Tracker')">Export Tracker Excel</button></div></div><div class="fm2-tracker-cards"><div class="service-card"><div class="label">6022 NetSuite Posted</div><div class="value">${fmtMoney(x.a22)}</div></div><div class="service-card"><div class="label">6022 Awaiting NetSuite</div><div class="value">${fmtMoney(b22.invoice)}</div></div><div class="service-card"><div class="label">6022 Estimates / PM</div><div class="value">${fmtMoney(b22.estimate+b22.carry)}</div></div><div class="service-card"><div class="label">6022 Projected</div><div class="value">${fmtMoney(x.projected22)}</div></div><div class="service-card"><div class="label">6023 Projected</div><div class="value">${fmtMoney(x.projected23)}</div></div></div>${preText}<div class="fm2-tracker-wrap"><table id="fm-month-tracker-table">${fm2TrackerTableHTML(rows)}</table></div>`;}
+  const panelTitle=driverPanel?.querySelector('.panel-title');if(panelTitle)panelTitle.textContent='Budget Drivers — Current Best-Known Exposure';
+  const panelSub=driverPanel?.querySelector('.panel-head .muted');if(panelSub)panelSub.textContent='Unresolved invoices and forecasts only; posted items move to NetSuite actual';
+  fm2BindSortableTables();
+};
+
+/* ---------- per-forklift live financial view ---------- */
+function fm2FinancialMonths(fid){
+  const set=new Set([todayISO().slice(0,7),FM_FIN_CUTOVER_MONTH]);transactions.filter(t=>t.forkliftId===fid).forEach(t=>{if(fm2YM(t.transactionDate))set.add(fm2YM(t.transactionDate));});serviceEvents.filter(e=>e.forkliftId===fid).forEach(e=>{if(fm2YM(e.serviceDate))set.add(fm2YM(e.serviceDate));});budgetHistory.filter(h=>h.forkliftId===fid).forEach(h=>{if(h.year&&h.monthNumber)set.add(`${h.year}-${String(h.monthNumber).padStart(2,'0')}`);});return [...set].sort().reverse().slice(0,24);
+}
+function fm2InstallForkliftFinance(){
+  const hist=document.getElementById('ff-history-section');if(!hist||document.getElementById('ff-financial-section'))return;
+  const d=document.createElement('div');d.id='ff-financial-section';d.style.display='none';d.innerHTML=`<div class="form-section" style="margin-top:12px">Financial Tracker — Live Estimate + Confirmed Actual</div><div class="fm2-fin-toolbar"><label class="form-label">Month</label><select id="ff-fin-month" class="form-input" style="width:190px" onchange="fm2RenderForkliftFinanceById()"></select><button class="btn" type="button" onclick="fm2ExportTableExcel('ff-fin-table','Forklift_Financial_Tracker.xlsx','Financial Tracker')">Export Excel</button></div><div class="metric-grid" id="ff-fin-metrics"></div><div class="history-wrap" style="max-height:260px"><table id="ff-fin-table"></table></div><div id="ff-fin-forecast-history" class="guide-note" style="margin-top:9px"></div>`;hist.insertAdjacentElement('beforebegin',d);
+}
+function fm2RenderForkliftFinance(f,requestedYM=''){
+  fm2InstallForkliftFinance();const sec=document.getElementById('ff-financial-section');if(!sec||!f){if(sec)sec.style.display='none';return;}sec.style.display='block';const sel=document.getElementById('ff-fin-month'),months=fm2FinancialMonths(f.id),desired=requestedYM||sel.value||((typeof budgetSelectedMonth!=='undefined'&&budgetSelectedMonth)?budgetSelectedMonth:todayISO().slice(0,7));sel.innerHTML=months.map(m=>`<option value="${m}"${m===desired?' selected':''}>${budgetMonthLabel(m)}</option>`).join('');if(!sel.value&&months.length)sel.value=months[0];const ym=sel.value,x=budgetSummary(ym),rows=fm2TrackerRows(ym,f.id),actual=rows.filter(r=>r.status===FM_POSTED).reduce((s,r)=>s+Number(r.netSuiteAmount||0),0),invoice=rows.filter(r=>r.status==='Awaiting NetSuite').reduce((s,r)=>s+Number(r.currentExpected||0),0),estimate=rows.filter(r=>r.status!=='Awaiting NetSuite'&&r.status!==FM_POSTED).reduce((s,r)=>s+Number(r.currentExpected||0),0),projected=actual+invoice+estimate;document.getElementById('ff-fin-metrics').innerHTML=`<div class="metric-card"><div class="k">NetSuite Posted</div><div class="v">${fmtMoney(actual)}</div><div class="sub">Confirmed accounting actual</div></div><div class="metric-card"><div class="k">Invoices Awaiting NetSuite</div><div class="v">${fmtMoney(invoice)}</div><div class="sub">Known operational amount</div></div><div class="metric-card"><div class="k">Estimates / Expected</div><div class="v">${fmtMoney(estimate)}</div><div class="sub">No stronger cost known yet</div></div><div class="metric-card"><div class="k">Current Expected Spend</div><div class="v">${fmtMoney(projected)}</div><div class="sub">Actual + unresolved best-known exposure</div></div>`;document.getElementById('ff-fin-table').innerHTML=fm2TrackerTableHTML(rows);const hist=budgetHistory.filter(h=>h.forkliftId===f.id&&h.year===Number(ym.slice(0,4))&&h.monthNumber===Number(ym.slice(5,7))).sort((a,b)=>String(b.forecastDate||'').localeCompare(String(a.forecastDate||''))).slice(0,6);document.getElementById('ff-fin-forecast-history').innerHTML=hist.length?`<b>Forecast trail:</b> `+hist.map(h=>`${fmtDate(fm2Date(h.forecastDate))} ${esc(h.forecastType||'Forecast')} ${fmtMoney(h.amount)}${h.forecastStatus?` (${esc(h.forecastStatus)})`:''}`).join(' · '):'<b>Forecast trail:</b> No saved forecast history for this forklift/month.';fm2BindSortableTables();
+}
+function fm2RenderForkliftFinanceById(){const f=fleet.find(x=>x.spId===editingForkliftSpId);if(f)fm2RenderForkliftFinance(f,formVal('ff-fin-month'));}
+const fm2BaseRenderForkliftHistory=renderForkliftHistory;
+renderForkliftHistory=function(f){const r=fm2BaseRenderForkliftHistory(f);fm2RenderForkliftFinance(f);return r;};
+fm2InstallForkliftFinance();
+
+/* ---------- sorting for tables that did not already have it ---------- */
+function fm2SortValue(txt){const s=String(txt||'').replace(/[▲▼↕]/g,'').trim();const money=s.replace(/[$,]/g,'');if(/^\(?-?\d+(\.\d+)?\)?$/.test(money))return {t:'n',v:Number(money.replace(/[()]/g,m=>m==='('?'-':''))};const dm=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(dm)return {t:'n',v:new Date(+dm[3],+dm[1]-1,+dm[2]).getTime()};return {t:'s',v:s.toLowerCase()};}
+function fm2MakeSortable(table){if(!table||table.dataset.fm2Sortable==='1')return;table.dataset.fm2Sortable='1';const heads=[...table.querySelectorAll('thead th')];heads.forEach((th,idx)=>{if(th.getAttribute('onclick')||th.classList.contains('sort'))return;th.style.cursor='pointer';th.title=(th.title?th.title+' · ':'')+'Click to sort';th.addEventListener('click',()=>{const tbody=table.tBodies[0];if(!tbody)return;const dir=table.dataset.fm2SortCol==String(idx)?-(Number(table.dataset.fm2SortDir)||1):1;table.dataset.fm2SortCol=idx;table.dataset.fm2SortDir=dir;heads.forEach(h=>h.dataset.fm2Arrow='');th.dataset.fm2Arrow=dir===1?'▲':'▼';const rows=[...tbody.rows].filter(r=>r.cells.length>idx&&!r.querySelector('.empty'));rows.sort((a,b)=>{const av=fm2SortValue(a.cells[idx]?.innerText),bv=fm2SortValue(b.cells[idx]?.innerText);if(av.t==='n'&&bv.t==='n')return (av.v-bv.v)*dir;return String(av.v).localeCompare(String(bv.v),undefined,{numeric:true,sensitivity:'base'})*dir;});rows.forEach(r=>tbody.appendChild(r));});});}
+function fm2BindSortableTables(){document.querySelectorAll('table').forEach(fm2MakeSortable);}
+const fm2SortObserver=new MutationObserver(()=>fm2BindSortableTables());fm2SortObserver.observe(document.body,{childList:true,subtree:true});fm2BindSortableTables();
+
+/* ---------- exports ---------- */
+function fm2CleanCellText(s){return String(s||'').replace(/[▲▼↕]/g,'').replace(/\s+/g,' ').trim();}
+function fm2TableMatrix(tableId){const t=document.getElementById(tableId);if(!t)return[];const rows=[];const head=[...t.querySelectorAll('thead th')].map(x=>fm2CleanCellText(x.innerText));if(head.length)rows.push(head);[...t.querySelectorAll('tbody tr')].filter(r=>getComputedStyle(r).display!=='none'&&!r.querySelector('.empty')).forEach(r=>rows.push([...r.cells].map(c=>fm2CleanCellText(c.innerText))));return rows;}
+function fm2DownloadCSV(matrix,filename){if(!matrix.length)return alert('Nothing to export.');const csv=matrix.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n'),blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
+function fm2ExportTableCSV(tableId,filename){fm2DownloadCSV(fm2TableMatrix(tableId),filename);}
+function fm2ExportTableExcel(tableId,filename,sheet='Data'){if(typeof XLSX==='undefined')return alert('Excel library did not load.');const m=fm2TableMatrix(tableId);if(!m.length)return alert('Nothing to export.');const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(m);XLSX.utils.book_append_sheet(wb,ws,sheet.slice(0,31));XLSX.writeFile(wb,filename);}
+function fm2ExportWorkbook(specs,filename){if(typeof XLSX==='undefined')return alert('Excel library did not load.');const wb=XLSX.utils.book_new();let added=0;for(const s of specs){const m=fm2TableMatrix(s.id);if(!m.length)continue;XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(m),s.name.slice(0,31));added++;}if(!added)return alert('Nothing to export.');XLSX.writeFile(wb,filename);}
+function fm2AddButton(parent,id,label,onClick,primary=false){if(!parent||document.getElementById(id))return;const b=document.createElement('button');b.id=id;b.className='btn'+(primary?' primary':'');b.textContent=label;b.onclick=onClick;parent.appendChild(b);}
+function fm2InstallExports(){
+  const top=document.querySelector('.topbar-actions .topbar-btn[onclick="exportCSV()"]');if(top)top.textContent='Export Fleet CSV';
+  const fleetAct=document.querySelector('#view-fleet .section-actions');fm2AddButton(fleetAct,'fm2-fleet-csv','Export CSV',()=>fm2ExportTableCSV('fleet-table','Forklift_Fleet_Current_View.csv'));fm2AddButton(fleetAct,'fm2-fleet-xlsx','Export Excel',()=>fm2ExportTableExcel('fleet-table','Forklift_Fleet_Current_View.xlsx','Fleet'));
+  const txAct=document.querySelector('#view-transactions .section-actions');fm2AddButton(txAct,'fm2-tx-csv','Export CSV',()=>fm2ExportTableCSV('transactions-table','Forklift_Transactions_Current_View.csv'));fm2AddButton(txAct,'fm2-tx-xlsx','Export Excel',()=>fm2ExportTableExcel('transactions-table','Forklift_Transactions_Current_View.xlsx','Transactions'));
+  const svcAct=document.querySelector('#view-service .section-actions');fm2AddButton(svcAct,'fm2-svc-xlsx','Export Service Excel',()=>fm2ExportWorkbook([{id:'repair-cases-table',name:'Repair Cases'},{id:'open-rentals-table',name:'Rentals'},{id:'hours-table',name:'Hour Readings'},{id:'service-documents-table',name:'Service Events'}],'Forklift_Service_Current_View.xlsx'));
+  const pmAct=document.querySelector('#view-pm .pm-page-toolbar');fm2AddButton(pmAct,'fm2-pm-xlsx','Export Excel',()=>fm2ExportTableExcel('pm-page-table','Forklift_PM_Schedule.xlsx','PM Schedule'));
+  const lifeAct=document.querySelector('#view-lifecycle .section-actions');fm2AddButton(lifeAct,'fm2-life-csv','Export CSV',()=>fm2ExportTableCSV('life-global-table','Forklift_Lifecycle_Current_View.csv'));
+  const budAct=document.querySelector('#view-budget .section-actions');fm2AddButton(budAct,'fm2-budget-tracker-xlsx','Tracker Excel',()=>fm2ExportTableExcel('fm-month-tracker-table',`Forklift_Month_Tracker_${budgetSelectedMonth}.xlsx`,'Month Tracker'));
+  const agAct=document.querySelector('#view-aging .section-actions');fm2AddButton(agAct,'fm2-aging-csv','Export Visible CSV',()=>fm2ExportTableCSV('ag-table','Forklift_Aging_Grading_Current_View.csv'));
+  const rpAct=document.querySelector('#view-replacement .section-actions');fm2AddButton(rpAct,'fm2-rp-csv','Export Visible CSV',()=>fm2ExportTableCSV('rp-table','Forklift_Replacement_Planning_Current_View.csv'));
+}
+const fm2BaseShowView=showView;
+showView=function(name,el){const r=fm2BaseShowView(name,el);fm2InstallExports();setTimeout(fm2BindSortableTables,0);return r;};
+fm2InstallExports();
+
+/* ---------- help language ---------- */
+(function(){
+  const budgetHelp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.startsWith('Forklift Budget —'))?.parentElement?.querySelector('.help-body');if(budgetHelp)budgetHelp.innerHTML=`<p><b>The Budget is both a live estimate and an accounting report.</b> NetSuite Posted is confirmed actual. Invoices Awaiting NetSuite and Open Estimates / PM Forecasts are unresolved operational exposure. Projected Month End combines confirmed actual with only the strongest unresolved amount for each item.</p><p><b>Best-known-value rule:</b> an estimate is replaced by a known vendor invoice; a vendor invoice is replaced by NetSuite actual. The app never adds all three together. Historical months keep the forecast trail so management can compare what was expected with what Accounting finally posted.</p><p>The Month Tracker shows each forklift/item with operational amount, NetSuite amount, current expected amount, status, and variance. Final NetSuite is always the accounting source of truth.</p>`;
+  const exp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Reports and exports')?.parentElement?.querySelector('.help-body');if(exp)exp.insertAdjacentHTML('beforeend','<p><b>Operational exports:</b> Fleet, Transactions, Service / Repair / Rental / Hours, PM Schedule, Lifecycle, Month Tracker, Aging / Grading, and Replacement Planning expose page-level CSV or Excel exports. Exports follow the current visible table/filter/sort where applicable.</p>');
+})();
+
+</script>
+
+<style id="oct06-financial-workflow-v2-styles">
+.fm2-tracker-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;padding:12px 12px 4px}.fm2-tracker-wrap{overflow:auto;max-height:440px;padding:8px 12px 12px}.fm2-tracker-wrap table{min-width:1550px}.fm2-forecast-compare{margin:8px 12px 2px;padding:9px 11px;background:var(--accent-light);border-radius:7px;font-size:10px;line-height:1.45}.fm2-fin-toolbar{display:flex;align-items:center;gap:8px;margin:8px 0 9px}.fm2-fin-toolbar .form-label{margin-right:2px}.fm2-fin-toolbar select{padding:6px 8px}th[data-fm2-arrow="▲"]::after{content:" ▲";color:var(--accent)}th[data-fm2-arrow="▼"]::after{content:" ▼";color:var(--accent)}
+@media(max-width:1150px){.fm2-tracker-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+
 </body>
 </html>
