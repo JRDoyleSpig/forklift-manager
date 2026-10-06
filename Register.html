@@ -5155,7 +5155,7 @@ fmFinReconcileGroup=async function(token,g){
 // Replace preview so variance uses the same operational evidence as reconciliation.
 renderImportPreview=function(){
   const modal=document.querySelector('#import-modal .modal');if(!modal)return;
-  nsImportGroups.forEach(fm3Recalc);
+  nsImportGroups.forEach(nsRecalcGroup);
   const auto=nsImportGroups.filter(g=>g.action==='import'),skip=nsImportGroups.filter(g=>g.action==='skip'),exclude=nsImportGroups.filter(g=>String(g.action).startsWith('exclude')),exceptions=nsImportGroups.filter(g=>g.action==='exception');
   const opMatched=auto.filter(g=>fm3OperationalAmount(g)!=null||g.legacyRows?.length).length;
   const varianceGroups=auto.filter(g=>{const v=fm3VarianceAmount(g);return v!=null&&Math.abs(v)>.01;});
