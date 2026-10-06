@@ -5744,5 +5744,72 @@ try{
   if(typeof renderBudget==='function')renderBudget();
 }catch(e){console.warn('v2.6 PM forecast refresh skipped:',e);}
 </script>
+
+<script id="fm-financial-revamp-v261-pm-final-filter">
+/* Final PM driver gate. Applied AFTER all earlier forecast wrappers so stale
+   PM rows cannot leak back into Budget / Month Tracker from older generators. */
+window.FM_FINANCIAL_REVAMP_VERSION='2.6.1-pm-final-filter';
+
+function fm261YmIndex(ym){
+  const m=String(ym||'').match(/^(\d{4})-(\d{2})$/);
+  return m?Number(m[1])*12+(Number(m[2])-1):null;
+}
+function fm261PmDueISO(row){
+  const m=String(row?.sourceId||'').match(/^PM:(#[^:]+):(\d{4}-\d{2}-\d{2})$/);
+  return m?m[2]:'';
+}
+function fm261IsPmForecast(row){
+  return String(row?.sourceType||'').toLowerCase()==='pm' || /pm forecast/i.test(String(row?.forecastType||'')) || String(row?.type||'')==='Expected PM';
+}
+
+const fm261BaseBudgetAllForecasts=budgetAllForecasts;
+budgetAllForecasts=function(){
+  const rows=fm261BaseBudgetAllForecasts();
+  const currentYM=todayISO().slice(0,7), curIdx=fm261YmIndex(currentYM);
+  if(curIdx==null)return rows;
+
+  const other=[], pm=[];
+  for(const r of rows){
+    if(!fm261IsPmForecast(r)){other.push(r);continue;}
+    const dueISO=fm261PmDueISO(r);
+    if(!dueISO){pm.push(r);continue;}
+    const dueYM=dueISO.slice(0,7), dueIdx=fm261YmIndex(dueYM);
+    if(dueIdx==null){pm.push(r);continue;}
+
+    // Hard rule: a missed PM may influence the NEXT month once. Anything
+    // older stays overdue operationally but contributes $0 to the budget.
+    if(dueIdx < curIdx-1) continue;
+
+    // A one-month-overdue PM can only appear in the current month.
+    if(dueIdx===curIdx-1){
+      if(String(r.ym||'')!==currentYM) continue;
+      r={...r,status:'One-Month Carry',basis:`PM Schedule due ${fmtDate(dueISO)} · one-month carry only · ${String(r.basis||'').replace(/^PM Schedule due[^·]*·\s*/,'')}`};
+    }
+    pm.push(r);
+  }
+
+  // One PM forecast maximum per forklift per target month. Prefer a PM whose
+  // due month equals the target month over a carry; otherwise prefer latest due.
+  const chosen=new Map();
+  for(const r of pm){
+    const key=`${r.forkliftId||''}|${r.ym||''}`;
+    const dueISO=fm261PmDueISO(r), dueIdx=fm261YmIndex(dueISO.slice(0,7));
+    const targetIdx=fm261YmIndex(r.ym);
+    const currentScheduled=(dueIdx!=null&&targetIdx!=null&&dueIdx===targetIdx)?1:0;
+    const score={currentScheduled,dueISO};
+    const prev=chosen.get(key);
+    if(!prev || score.currentScheduled>prev.score.currentScheduled ||
+       (score.currentScheduled===prev.score.currentScheduled && String(score.dueISO)>String(prev.score.dueISO))){
+      chosen.set(key,{row:r,score});
+    }
+  }
+
+  return [...other,...[...chosen.values()].map(x=>x.row)];
+};
+
+try{ if(typeof renderBudget==='function') renderBudget(); }
+catch(e){ console.warn('v2.6.1 final PM filter refresh skipped:',e); }
+</script>
+
 </body>
 </html>
