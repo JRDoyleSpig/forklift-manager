@@ -2689,7 +2689,7 @@ function reconUpdateCloseButton(){const btn=document.getElementById('budget-clos
 function reconResultCell(ok,text){return `<span style="font-weight:700;color:${ok?'var(--good)':'var(--danger)'}">${ok?'✓':'⚠'} ${text}</span>`;}
 function reconRender(){
   const el=document.getElementById('budget-close-reconcile-results');if(!el)return;
-  if(!budgetCloseRecon){el.innerHTML='<div class="budget-recon-empty">Upload the completed monthly budget workbook to compare final 6022/6023 budget and actuals before closing.</div>';reconUpdateCloseButton();return;}
+  if(!budgetCloseRecon){el.innerHTML='<div class="budget-recon-empty">Upload the final monthly budget workbook to compare final 6022/6023 budget and actuals before closing.</div>';reconUpdateCloseButton();return;}
   const r=budgetCloseRecon,ok22=Math.abs(r.diff22)<=reconTolerance,ok23=Math.abs(r.diff23)<=reconTolerance,bok22=Math.abs(r.budgetDiff22)<=reconTolerance,bok23=Math.abs(r.budgetDiff23)<=reconTolerance;
   const issues=r.issues||[];
   el.innerHTML=`<div class="budget-recon-file"><b>${esc(r.fileName)}</b> · ${esc(budgetMonthLabel(r.month))}${r.month!==budgetSelectedMonth?' <span class="budget-recon-bad">MONTH DOES NOT MATCH SELECTED MONTH</span>':''}</div>
@@ -2699,7 +2699,7 @@ function reconRender(){
   ${(!bok22||!bok23)?'<div class="budget-recon-action"><button class="btn primary" onclick="budgetReconApplyCompletedBudget()">Use Completed Budget for This Month</button><span class="muted">Updates only the selected month\'s 6022/6023 budget records in SharePoint.</span></div>':''}
   <div class="budget-recon-status ${reconReady()?'ready':'not-ready'}">${reconReady()?'<b>Reconciled — ready to close.</b> Budget and accounting actuals match the completed workbook.':'<b>Not ready to close.</b> Resolve the highlighted differences first.'}</div>
   ${issues.length?`<details class="budget-recon-issues" open><summary>${issues.length} transaction reconciliation issue${issues.length===1?'':'s'}</summary><div style="overflow:auto;max-height:210px"><table><thead><tr><th>Issue</th><th>Acct</th><th>Reference</th><th>Vendor</th><th>Completed Actual</th><th>Manager</th><th>Difference</th></tr></thead><tbody>${issues.slice(0,40).map(i=>`<tr><td>${esc(i.side)}</td><td>${i.account}</td><td>${esc(i.reference||'—')}</td><td>${esc(i.vendor||'—')}</td><td>${reconMoney(i.workbook)}</td><td>${reconMoney(i.manager)}</td><td>${reconMoney(i.difference)}</td></tr>`).join('')}</tbody></table></div>${issues.length>40?`<div class="muted">Showing first 40 of ${issues.length} issues.</div>`:''}</details>`:''}`;
-  if(r.autoSuperseded?.length){const total=r.autoSuperseded.reduce((s,t)=>s+Number(t.amount||0),0);el.insertAdjacentHTML('beforeend',`<div class="budget-recon-auto"><b>Automatically reconciled ${r.autoSuperseded.length} provisional transaction${r.autoSuperseded.length===1?'':'s'} (${reconMoney(total)})</b><div class="muted" style="margin-top:3px">The completed budget matched the NetSuite accounting detail, so the earlier upload-created financial row${r.autoSuperseded.length===1?' was':'s were'} retained for audit but removed from financial totals.</div><details style="margin-top:6px"><summary>Show automatically superseded rows</summary><table><thead><tr><th>Reference</th><th>Forklift</th><th>Transaction</th><th>Amount</th></tr></thead><tbody>${r.autoSuperseded.map(t=>`<tr><td>${esc(t.invoiceNumber||'—')}</td><td>${esc(t.forkliftId||'—')}</td><td>${esc(t.transactionId||String(t.spId))}</td><td>${reconMoney(t.amount)}</td></tr>`).join('')}</tbody></table></details></div>`);}
+  if(r.autoSuperseded?.length){const total=r.autoSuperseded.reduce((s,t)=>s+Number(t.amount||0),0);el.insertAdjacentHTML('beforeend',`<div class="budget-recon-auto"><b>Automatically reconciled ${r.autoSuperseded.length} provisional transaction${r.autoSuperseded.length===1?'':'s'} (${reconMoney(total)})</b><div class="muted" style="margin-top:3px">The final monthly budget matched the NetSuite accounting detail, so the earlier upload-created financial row${r.autoSuperseded.length===1?' was':'s were'} retained for audit but removed from financial totals.</div><details style="margin-top:6px"><summary>Show automatically superseded rows</summary><table><thead><tr><th>Reference</th><th>Forklift</th><th>Transaction</th><th>Amount</th></tr></thead><tbody>${r.autoSuperseded.map(t=>`<tr><td>${esc(t.invoiceNumber||'—')}</td><td>${esc(t.forkliftId||'—')}</td><td>${esc(t.transactionId||String(t.spId))}</td><td>${reconMoney(t.amount)}</td></tr>`).join('')}</tbody></table></details></div>`);}
   if(r.autoError)el.insertAdjacentHTML('beforeend',`<div class="budget-recon-error"><b>Automatic duplicate reconciliation failed.</b><br>${esc(r.autoError)}</div>`);
   reconUpdateCloseButton();
 }
@@ -2745,9 +2745,9 @@ window.budgetReconApplyCompletedBudget=async function(){
 function reconInstallUI(){
   const modal=document.getElementById('budget-close-modal');if(!modal||document.getElementById('budget-close-reconcile-wrap'))return;
   const preview=document.getElementById('budget-close-preview');if(!preview)return;
-  preview.insertAdjacentHTML('beforebegin',`<div id="budget-close-reconcile-wrap" class="budget-recon-wrap"><div class="budget-recon-step"><b>2. Upload Completed Monthly Budget</b><div class="muted">Use the completed month workbook after the monthly Transactions import. The app will reconcile final 6022/6023 budget and accounting actuals before closing.</div><div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap"><label class="btn primary file-btn">Choose Completed Budget<input type="file" id="budget-close-reconcile-file" accept=".xlsx,.xls" onchange="budgetReconHandleFile(this.files[0])"/></label><span id="budget-close-reconcile-status" class="muted">Required</span></div></div><div id="budget-close-reconcile-results"></div></div>`);
+  preview.insertAdjacentHTML('beforebegin',`<div id="budget-close-reconcile-wrap" class="budget-recon-wrap"><div class="budget-recon-step"><b>2. Upload Final Monthly Budget</b><div class="muted">Use the final monthly budget workbook after the monthly Transactions import. The app will reconcile final 6022/6023 budget and accounting actuals before closing.</div><div style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap"><label class="btn primary file-btn">Choose Final Monthly Budget<input type="file" id="budget-close-reconcile-file" accept=".xlsx,.xls" onchange="budgetReconHandleFile(this.files[0])"/></label><span id="budget-close-reconcile-status" class="muted">Required</span></div></div><div id="budget-close-reconcile-results"></div></div>`);
   const checkbox=document.getElementById('budget-close-import-confirm');checkbox?.addEventListener('change',reconUpdateCloseButton);
-  const oldInfo=modal.querySelector('.life-info');if(oldInfo)oldInfo.innerHTML='<b>Month-end workflow:</b> confirm the monthly Transactions import, upload the completed monthly budget workbook, reconcile 6022/6023, then close. The month cannot close while reconciliation differences remain.';
+  const oldInfo=modal.querySelector('.life-info');if(oldInfo)oldInfo.innerHTML='<b>Month-end workflow:</b> confirm the monthly Transactions import, upload the final monthly budget workbook, reconcile 6022/6023, then close. The month cannot close while reconciliation differences remain.';
   const label=checkbox?.closest('label');if(label)label.innerHTML='<input type="checkbox" id="budget-close-import-confirm"> <b>1. I completed/reviewed the monthly NetSuite transaction import</b>';
   document.getElementById('budget-close-import-confirm')?.addEventListener('change',reconUpdateCloseButton);
   const s22=document.getElementById('budget-close-6022')?.closest('.form-group'),s23=document.getElementById('budget-close-6023')?.closest('.form-group');if(s22)s22.style.display='none';if(s23)s23.style.display='none';
@@ -2757,8 +2757,8 @@ budgetOpenCloseModal=function(){reconInstallUI();budgetCloseRecon=null;reconBase
 const reconBaseClose=budgetCloseMonth;
 budgetCloseMonth=async function(){
   if(!document.getElementById('budget-close-import-confirm')?.checked)return alert('First confirm that you completed/reviewed the monthly NetSuite transaction import.');
-  if(!budgetCloseRecon)return alert('Upload the completed monthly budget workbook and reconcile it before closing the month.');
-  if(!reconReady())return alert('The completed budget does not fully reconcile yet. Resolve the highlighted 6022/6023 budget and actual differences before closing.');
+  if(!budgetCloseRecon)return alert('Upload the final monthly budget workbook and reconcile it before closing the month.');
+  if(!reconReady())return alert('The final monthly budget does not fully reconcile yet. Resolve the highlighted 6022/6023 budget and actual differences before closing.');
   // Store reconciliation evidence in the close note so the snapshot is auditable.
   const noteEl=document.getElementById('budget-close-note'),existing=String(noteEl?.value||'').trim(),evidence=`Reconciled to ${budgetCloseRecon.fileName}: 6022 actual ${reconMoney(budgetCloseRecon.workbookActual22)}, 6023 actual ${reconMoney(budgetCloseRecon.workbookActual23)}.`;if(noteEl)noteEl.value=existing?`${existing} | ${evidence}`:evidence;
   await reconBaseClose();
@@ -2770,7 +2770,7 @@ function reconInstallStyles(){if(document.getElementById('budget-recon-styles'))
 .budget-recon-file{font-size:11px;margin:10px 0 6px}.budget-recon-bad{color:var(--danger);font-weight:800}.budget-recon-table{width:100%;font-size:10px;border-collapse:collapse}.budget-recon-table th,.budget-recon-table td{padding:6px;border-bottom:1px solid var(--border);text-align:right;vertical-align:top}.budget-recon-table th:first-child,.budget-recon-table td:first-child{text-align:left}.budget-recon-action{display:flex;align-items:center;gap:8px;margin:9px 0;flex-wrap:wrap}.budget-recon-status{padding:9px 10px;border-radius:8px;margin-top:8px;font-size:11px}.budget-recon-status.ready{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35)}.budget-recon-status.not-ready{background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35)}.budget-recon-issues{margin-top:9px;font-size:10px}.budget-recon-issues summary{cursor:pointer;font-weight:700}.budget-recon-issues table{width:100%;border-collapse:collapse;margin-top:6px}.budget-recon-issues th,.budget-recon-issues td{padding:5px;border-bottom:1px solid var(--border);text-align:left}.budget-recon-issues td:nth-last-child(-n+3){text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </style>`);}
 function reconUpdateHelp(){
-  const topics=document.getElementById('help-topics');if(!topics)return;const old=document.getElementById('help-month-close-reconciliation');old?.remove();topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-month-close-reconciliation"><summary>Month-end budget close — completed budget reconciliation</summary><div class="help-body"><p><b>Normal month-end order:</b> first go to Transactions and complete/review the monthly NetSuite CSV import. Then go to Forklift Budget, select the month, and click <b>Close Month</b>.</p><p>Inside Close Month, confirm the transaction import and upload the <b>Completed Monthly Budget</b> workbook. The app reads the final 6022 Forklift Repair &amp; Maintenance and 6023 Forklift Rental accounting actuals, compares them to Forklift Manager Transactions, and also compares the completed month budget to the Budget records stored in SharePoint. The app uses the month's <b>approved Budget</b> column for the official budget comparison. <b>Flex Budget is supporting context only and is never used to overwrite Forklift Manager budget records.</b> If the approved Budget formula value is unavailable but Actual and Variance are present, the app derives the approved budget as <b>Actual − Variance</b>.</p><p>If the completed budget differs from the app, use <b>Use Completed Budget for This Month</b> to update only that month’s 6022/6023 Budget records. Transaction differences are shown by invoice/reference so missing, extra, or amount-mismatched items can be corrected. <b>The month cannot be closed until both accounts’ budget and actual differences reconcile to zero.</b></p><p>After reconciliation, Close Month stores the normal forecast-at-close snapshot plus a reconciliation note identifying the completed workbook used. Late accounting transactions after close are still detected by Changed After Close.</p></div></details>`);
+  const topics=document.getElementById('help-topics');if(!topics)return;const old=document.getElementById('help-month-close-reconciliation');old?.remove();topics.insertAdjacentHTML('beforeend',`<details class="help-topic" id="help-month-close-reconciliation"><summary>Month-end budget close — final monthly budget reconciliation</summary><div class="help-body"><p><b>Normal month-end order:</b> first go to Transactions and complete/review the monthly NetSuite CSV import. Then go to Forklift Budget, select the month, and click <b>Close Month</b>.</p><p>Inside Close Month, confirm the transaction import and upload the <b>Final Monthly Budget</b> workbook. The app reads the final 6022 Forklift Repair &amp; Maintenance and 6023 Forklift Rental accounting actuals, compares them to Forklift Manager Transactions, and also compares the completed month budget to the Budget records stored in SharePoint. The app uses the month's <b>approved Budget</b> column for the official budget comparison. <b>Flex Budget is supporting context only and is never used to overwrite Forklift Manager budget records.</b> If the approved Budget formula value is unavailable but Actual and Variance are present, the app derives the approved budget as <b>Actual − Variance</b>.</p><p>If the final monthly budget differs from the app, use <b>Use Completed Budget for This Month</b> to update only that month’s 6022/6023 Budget records. Transaction differences are shown by invoice/reference so missing, extra, or amount-mismatched items can be corrected. <b>The month cannot be closed until both accounts’ budget and actual differences reconcile to zero.</b></p><p>After reconciliation, Close Month stores the normal forecast-at-close snapshot plus a reconciliation note identifying the completed workbook used. Late accounting transactions after close are still detected by Changed After Close.</p></div></details>`);
 }
 reconInstallStyles();reconInstallUI();reconUpdateHelp();reconUpdateCloseButton();
 })();
@@ -3056,7 +3056,7 @@ finStyles();finUpdateHelp();
 
 <script>
 /* ── MONTH CLOSE AUTO-SUPERSEDE FIX v3 ─────────────────────────────────
-   Reconciliation-driven resolver. The completed month workbook is the final
+   Reconciliation-driven resolver. The final monthly budget workbook is the final
    control total. When an invoice is over in Forklift Manager by exactly the
    amount of an earlier upload-created row, supersede that provisional row.
    This deliberately matches by invoice/reference first so vendor naming and
@@ -3114,7 +3114,7 @@ finStyles();finUpdateHelp();
     if(!nf)throw new Error('Forklift Transactions is missing the Notes field needed for financial supersession.');
     let n=0;
     for(const {t,issue} of rows){
-      const payload=encodeURIComponent(JSON.stringify({v:3,month:budgetSelectedMonth,file:fileName||'',reference:t.invoiceNumber||issue.reference||'',reason:'Month-end completed budget reconciled to NetSuite detail; earlier upload-created financial row superseded',workbookAmount:Number(issue.workbook||0),difference:Number(issue.difference||0),at:new Date().toISOString()}));
+      const payload=encodeURIComponent(JSON.stringify({v:3,month:budgetSelectedMonth,file:fileName||'',reference:t.invoiceNumber||issue.reference||'',reason:'Month-end final monthly budget reconciled to NetSuite detail; earlier upload-created financial row superseded',workbookAmount:Number(issue.workbook||0),difference:Number(issue.difference||0),at:new Date().toISOString()}));
       const old=String(t.notes||'').trim(),nn=old+(old?' | ':'')+'[[FIN_SUPERSEDED:'+payload+']]',body={__metadata:{type:et}};body[nf]=nn;
       const resp=await fetch(TX_ITEMS_API+`(${t.spId})`,{method:'POST',headers:{Accept:'application/json;odata=verbose','Content-Type':'application/json;odata=verbose',Authorization:'Bearer '+token,'X-HTTP-Method':'MERGE','IF-MATCH':'*'},body:JSON.stringify(body)});
       if(!resp.ok)throw new Error(`Could not supersede ${t.transactionId||t.spId}: ${await resp.text()}`);
@@ -5284,9 +5284,205 @@ budgetOpenCloseModal=function(){
   const title=document.querySelector('#budget-close-modal .modal-title');
   if(title)title.textContent='Final Month Check / Close Forklift Budget';
   const info=document.querySelector('#budget-close-modal .life-info');
-  if(info)info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Completed Monthly Budget</b> workbook below to verify final 6022/6023 budget and actual totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end projected/final spend; forecast history is retained for accuracy only.';
+  if(info)info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Final Monthly Budget</b> workbook below to verify final 6022/6023 budget and actual totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end projected/final spend; forecast history is retained for accuracy only.';
 };
 </script>
 
-\n<script id="fm-final-monthly-budget-label-20261006">\n(function(){\n  function relabelFinalMonthlyBudget(){\n    const b=document.getElementById('budget-close-btn');\n    if(b) b.textContent='Upload Final Monthly Budget / Close';\n    const title=document.querySelector('#budget-close-modal .modal-title');\n    if(title) title.textContent='Final Monthly Budget Check / Close';\n    const info=document.querySelector('#budget-close-modal .life-info');\n    if(info) info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Final Monthly Budget</b> workbook (your completed monthly budget file with actuals) to verify final 6022/6023 budget and accounting totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end final spend; forecast history remains for accuracy analysis only.';\n    const wrap=document.getElementById('budget-close-reconcile-wrap');\n    if(wrap){\n      const step=wrap.querySelector('.budget-recon-step');\n      if(step){\n        const btag=step.querySelector('b');\n        if(btag) btag.textContent='2. Upload Final Monthly Budget';\n        const muted=step.querySelector('.muted');\n        if(muted) muted.textContent='Use the final completed monthly budget workbook with actuals after the monthly NetSuite transaction import. The app checks the final 6022/6023 budget and accounting actuals before the month can be closed.';\n      }\n      const fileLabel=wrap.querySelector('label.file-btn');\n      if(fileLabel){\n        const input=fileLabel.querySelector('input');\n        fileLabel.childNodes.forEach(n=>{if(n.nodeType===3)n.textContent='';});\n        fileLabel.insertBefore(document.createTextNode('Choose Final Monthly Budget'), input||null);\n      }\n    }\n    const save=document.getElementById('budget-close-save');\n    if(save) save.textContent='Close Verified Month';\n  }\n  const oldOpen=window.budgetOpenCloseModal;\n  if(typeof oldOpen==='function'){\n    window.budgetOpenCloseModal=function(){\n      const r=oldOpen.apply(this,arguments);\n      setTimeout(relabelFinalMonthlyBudget,0);\n      return r;\n    };\n  }\n  const oldRender=window.renderBudget;\n  if(typeof oldRender==='function'){\n    window.renderBudget=function(){\n      const r=oldRender.apply(this,arguments);\n      relabelFinalMonthlyBudget();\n      return r;\n    };\n  }\n  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',relabelFinalMonthlyBudget);\n  else relabelFinalMonthlyBudget();\n})();\n</script>\n</body>
+\n<script id="fm-final-monthly-budget-label-20261006">\n(function(){\n  function relabelFinalMonthlyBudget(){\n    const b=document.getElementById('budget-close-btn');\n    if(b) b.textContent='Upload Final Monthly Budget / Close';\n    const title=document.querySelector('#budget-close-modal .modal-title');\n    if(title) title.textContent='Final Monthly Budget Check / Close';\n    const info=document.querySelector('#budget-close-modal .life-info');\n    if(info) info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Final Monthly Budget</b> workbook (your completed monthly budget file with actuals) to verify final 6022/6023 budget and accounting totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end final spend; forecast history remains for accuracy analysis only.';\n    const wrap=document.getElementById('budget-close-reconcile-wrap');\n    if(wrap){\n      const step=wrap.querySelector('.budget-recon-step');\n      if(step){\n        const btag=step.querySelector('b');\n        if(btag) btag.textContent='2. Upload Final Monthly Budget';\n        const muted=step.querySelector('.muted');\n        if(muted) muted.textContent='Use the final final monthly budget workbook with actuals after the monthly NetSuite transaction import. The app checks the final 6022/6023 budget and accounting actuals before the month can be closed.';\n      }\n      const fileLabel=wrap.querySelector('label.file-btn');\n      if(fileLabel){\n        const input=fileLabel.querySelector('input');\n        fileLabel.childNodes.forEach(n=>{if(n.nodeType===3)n.textContent='';});\n        fileLabel.insertBefore(document.createTextNode('Choose Final Monthly Budget'), input||null);\n      }\n    }\n    const save=document.getElementById('budget-close-save');\n    if(save) save.textContent='Close Verified Month';\n  }\n  const oldOpen=window.budgetOpenCloseModal;\n  if(typeof oldOpen==='function'){\n    window.budgetOpenCloseModal=function(){\n      const r=oldOpen.apply(this,arguments);\n      setTimeout(relabelFinalMonthlyBudget,0);\n      return r;\n    };\n  }\n  const oldRender=window.renderBudget;\n  if(typeof oldRender==='function'){\n    window.renderBudget=function(){\n      const r=oldRender.apply(this,arguments);\n      relabelFinalMonthlyBudget();\n      return r;\n    };\n  }\n  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',relabelFinalMonthlyBudget);\n  else relabelFinalMonthlyBudget();\n})();\n</script>\n
+<script id="fm-v25-invoice-parser-dates">
+/* =====================================================================
+   FORKLIFT MANAGER — v2.5 INVOICE PARSER + DUAL DATE SUPPORT
+   - Strong label-based invoice/serial parsing (avoids "Date"/"Serviced")
+   - Invoice/Document Date is the accounting-facing / NetSuite date
+   - PM Completed Date is tracked separately for PM scheduling/history
+   - Automatic serial-to-forklift matching, then workroom/vendor population
+   - Operational financial preview terminology (no transaction created here)
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.5-invoice-parser-dates';
+
+function fm25NormDateUS(v){
+  const m=String(v||'').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if(!m)return '';
+  let y=Number(m[3]); if(y<100)y+=2000;
+  const mo=Number(m[1]),d=Number(m[2]);
+  if(mo<1||mo>12||d<1||d>31)return '';
+  return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+}
+function fm25First(text,patterns){
+  const raw=String(text||'');
+  for(const rx of patterns){const m=raw.match(rx);if(m&&m[1])return String(m[1]).trim();}
+  return '';
+}
+
+// Final parser override. Deliberately does NOT use generic "Equipment" as a serial label
+// and requires a real invoice-number label boundary so "Invoice Date" cannot become reference "Date".
+extractWorkOrder=function(text){
+  const raw=String(text||'').replace(/\r/g,'\n');
+  const clean=raw.replace(/[ \t]+/g,' ').replace(/\n+/g,'\n');
+  const flat=clean.replace(/\s+/g,' ');
+
+  const serial=fm25First(clean,[
+    /\bS\s*\/\s*N\s*:\s*([A-Z0-9-]{6,})\b/i,
+    /\bSerial(?:\s+Number)?\s*:\s*([A-Z0-9-]{6,})\b/i,
+    /\bS\/N\s+([A-Z0-9-]{6,})\b/i,
+    /\b([A-Z]\d{3}[A-Z]\d{5}[A-Z])\b/i
+  ]).toUpperCase();
+
+  const invoiceNumber=fm25First(clean,[
+    /\bInvoice\s*(?:No\.?|Number|#)\s*:?\s*([A-Z0-9-]{3,})\b/i,
+    /\bInvoice\s*:\s*(?!Date\b)([A-Z0-9-]{3,})\b/i
+  ]);
+  const workOrder=fm25First(clean,[
+    /\bWork\s*Order\s*(?:No\.?|Number|#)?\s*:\s*([A-Z0-9-]{3,})\b/i,
+    /\bWork\s*Order\s+(?!Date\b)([A-Z0-9-]{3,})\b/i
+  ]);
+
+  const invoiceDateUS=fm25First(clean,[/\bInvoice\s+Date\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/i]);
+  const completedDateUS=fm25First(clean,[
+    /\bCompleted\s+Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/i,
+    /\bDate\s+Completed\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/i
+  ]);
+  const startedDateUS=fm25First(clean,[/\bDate\s+Started\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/i]);
+  const invoiceDate=fm25NormDateUS(invoiceDateUS);
+  const completedDate=fm25NormDateUS(completedDateUS);
+  const fallbackDate=fm25NormDateUS(startedDateUS);
+
+  const hm=flat.match(/\bHours\s*:?\s*([\d,]+(?:\.\d+)?)\b/i);
+  let vendor='';
+  if(/crown lift trucks|crown equipment|crown\.com/i.test(flat))vendor='Crown';
+
+  // Prefer explicit Total Due / Amount Due / Grand Total, then the last explicit Total.
+  let amount=null;
+  for(const rx of [
+    /\bTotal\s+Due\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bAmount\s+Due\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bGrand\s+Total\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bTotal\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig
+  ]){
+    const vals=[...flat.matchAll(rx)].map(m=>Number(String(m[1]).replace(/,/g,''))).filter(Number.isFinite);
+    if(vals.length){amount=vals[vals.length-1];break;}
+  }
+  const isPM=/planned\s+maint|planned\s+maintenance|preventive\s+maintenance|preventative\s+maintenance|\bPM\b/i.test(flat);
+  const reference=invoiceNumber||workOrder||'';
+  return {
+    serial,
+    hours:hm?Number(hm[1].replace(/,/g,'')):null,
+    reference,
+    invoiceNumber,
+    workOrder,
+    invoiceDate,
+    completedDate,
+    date:invoiceDate||completedDate||fallbackDate,
+    vendor,isPM,amount,
+    isInvoice:!!invoiceNumber||/\bINVOICE\b/i.test(flat)
+  };
+};
+
+function fm25InstallCompletedDateUI(){
+  const date=document.getElementById('wo-date'); if(!date)return;
+  const dateGroup=date.closest('.form-group');
+  const dateLabel=dateGroup?.querySelector('.form-label');
+  if(dateLabel)dateLabel.textContent='Invoice / Document Date (NetSuite Date)';
+  if(!document.getElementById('wo-completed-date')){
+    const serial=document.getElementById('wo-serial');
+    const target=serial?.closest('.form-group');
+    if(target)target.insertAdjacentHTML('afterend',`<div class="form-group"><label class="form-label">PM Completed Date (if shown)</label><input class="form-input" id="wo-completed-date" type="date"><div class="muted" style="font-size:10px;margin-top:3px">Used for PM history/scheduling. Invoice date remains the accounting-facing date.</div></div>`);
+  }
+  const p=document.getElementById('wo-transaction-preview');
+  if(p){const h=p.querySelector('b');if(h&&/transaction preview/i.test(h.textContent||''))h.textContent='Financial preview';}
+}
+
+const fm25OpenBase=openWorkOrderModal;
+openWorkOrderModal=function(selected=''){
+  const r=fm25OpenBase(selected);
+  fm25InstallCompletedDateUI();
+  setFormVal('wo-completed-date','');
+  return r;
+};
+
+analyzeWorkOrderFile=async function(file){
+  if(!file)return;
+  fm25InstallCompletedDateUI();
+  workOrderFile=file;
+  const preview=document.getElementById('wo-preview');
+  preview.textContent='Reading document…';
+  try{
+    workOrderText=file.name.toLowerCase().endsWith('.pdf')?await pdfText(file):await file.text();
+    const x=extractWorkOrder(workOrderText),m=workOrderDetectForklift(workOrderText,x.serial);
+    setFormVal('wo-serial',x.serial||'');
+    setFormVal('wo-hours',x.hours??'');
+    setFormVal('wo-reference',x.reference||'');
+    setFormVal('wo-amount',x.amount??'');
+    if(x.invoiceDate||x.date)setFormVal('wo-date',x.invoiceDate||x.date);
+    setFormVal('wo-completed-date',x.completedDate||'');
+    setFormVal('wo-vendor',x.vendor||'');
+    document.getElementById('wo-is-pm').checked=!!x.isPM;
+    if(m.forklift)setFormVal('wo-forklift',m.forklift.id);
+    setFormVal('wo-transaction-type',x.isPM?'PM Service':(x.amount!=null&&x.isInvoice?'Repair / Expense':'Do Not Create Transaction'));
+    refreshWorkOrderMatch();
+    // refreshWorkOrderMatch populates accounting workroom + primary vendor after serial match.
+    const invLabel=x.invoiceDate?fmtDate(x.invoiceDate):'Not found';
+    const compLabel=x.completedDate?fmtDate(x.completedDate):'Not found';
+    preview.innerHTML=`<strong>Detected:</strong> ${x.isPM?'Planned Maintenance / PM':(x.isInvoice?'Invoice / Service Document':'Service Work Order')}<br>`+
+      `Asset match: <strong>${esc(m.forklift?.id||'Not found')}</strong> (${m.confidence} confidence · ${esc(m.reason)})<br>`+
+      `Serial: <strong>${esc(x.serial||'Not found')}</strong> · Invoice Date: <strong>${invLabel}</strong> · PM Completed: <strong>${compLabel}</strong><br>`+
+      `Reference: <strong>${esc(x.reference||'Not found')}</strong> · Amount: <strong>${x.amount==null?'Not found':fmtMoney(x.amount)}</strong><br>`+
+      `<span class="doc-status-ok">Document selected: ${esc(file.name)} — ready to upload to Forklift Service Events.</span><br>`+
+      `<span class="muted">Invoice Date is used for accounting/NetSuite timing. PM Completed Date is used for PM history/scheduling. Review every field before saving.</span>`;
+    refreshWorkOrderMatch();
+    refreshWorkOrderTransactionPreview();
+  }catch(e){
+    console.error(e);
+    preview.innerHTML=`Could not automatically read this document: ${esc(e.message)} You can still enter fields manually.<br><span class="doc-status-ok">Document selected: ${esc(file.name)} — ready to upload.</span>`;
+    refreshWorkOrderTransactionPreview();
+  }
+};
+
+// Preserve the invoice date as the Service Event / financial-facing date, but use the
+// PM completed date for PM scheduling. Also preserve both dates in the event notes.
+const fm25SaveBase=saveWorkOrderHours;
+saveWorkOrderHours=async function(){
+  fm25InstallCompletedDateUI();
+  const completed=formVal('wo-completed-date'),invoiceDate=formVal('wo-date'),isPM=!!document.getElementById('wo-is-pm')?.checked;
+  const notesEl=document.getElementById('wo-notes');
+  const originalNotes=notesEl?.value||'';
+  if(isPM&&completed){
+    const stamp=[`PM Completed Date: ${completed}`,invoiceDate?`Invoice Date: ${invoiceDate}`:''].filter(Boolean).join(' | ');
+    if(notesEl&&!originalNotes.includes('PM Completed Date:'))notesEl.value=[originalNotes,stamp].filter(Boolean).join(' | ');
+  }
+  const origUpdate=updateLastPMFromUpload;
+  if(isPM&&completed){
+    updateLastPMFromUpload=async function(token,f,_date){return await origUpdate(token,f,completed);};
+  }
+  try{return await fm25SaveBase();}
+  finally{updateLastPMFromUpload=origUpdate;}
+};
+
+// Keep operational-only wording current whenever the preview redraws.
+const fm25RefreshPreviewBase=refreshWorkOrderTransactionPreview;
+refreshWorkOrderTransactionPreview=function(){
+  const r=fm25RefreshPreviewBase();
+  const el=document.getElementById('wo-transaction-preview');
+  if(el){
+    const html=el.innerHTML.replace(/Transaction preview/gi,'Financial preview');
+    el.innerHTML=html;
+  }
+  return r;
+};
+
+// Final monthly budget terminology cleanup on dynamically-generated close UI/help.
+const fm25BudgetOpenCloseBase=budgetOpenCloseModal;
+budgetOpenCloseModal=function(){
+  const r=fm25BudgetOpenCloseBase();
+  setTimeout(()=>{
+    document.querySelectorAll('#budget-close-modal *').forEach(el=>{
+      if(el.childNodes.length===1&&el.firstChild?.nodeType===3){
+        el.textContent=el.textContent.replace(/Completed Monthly Budget/g,'Final Monthly Budget').replace(/Choose Completed Budget/g,'Choose Final Monthly Budget');
+      }
+    });
+  },0);
+  return r;
+};
+</script>
+</body>
 </html>
