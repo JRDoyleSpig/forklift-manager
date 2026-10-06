@@ -5875,5 +5875,109 @@ try{
 }catch(e){console.warn('v2.7 authoritative PM forecast refresh skipped:',e);}
 </script>
 
+
+<script id="fm-financial-revamp-v28-completed-repair-financial-exposure">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.8
+   COMPLETED REPAIR ≠ FINANCIALLY RESOLVED
+
+   A repair may be operationally complete/closed while its vendor invoice is
+   still outstanding. Closing the repair removes it from Open Repair Cases,
+   but the last-known estimate must remain in the live budget until stronger
+   financial evidence (invoice / NetSuite actual) replaces it.
+
+   Rules:
+   - Open repair: unchanged — forecast normally.
+   - Repaired / Closed or Repaired / Resolved with no stronger cost:
+       keep the last-known repair estimate as "Completed Repair — Awaiting Invoice".
+   - Cancelled / no longer needed: no financial exposure.
+   - Closed unresolved repairs carry into the current open month if still
+       waiting for an invoice; they do not disappear merely because operations closed.
+   - Existing best-known-value precedence still replaces the estimate with a
+       vendor invoice, then NetSuite actual.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.8-completed-repair-awaiting-invoice';
+
+function fm28RepairCancelled(c){
+  const s=String(c?.status||'').toLowerCase();
+  return ['cancelled','cancelled / no longer needed'].includes(s);
+}
+function fm28RepairOperationallyClosed(c){
+  const s=String(c?.status||'').toLowerCase();
+  return ['repaired / closed','repaired / resolved'].includes(s);
+}
+function fm28LatestRepairForecastAmount(caseId){
+  const rows=(budgetHistory||[]).filter(h=>
+    String(h.sourceType||'')==='Repair Case' &&
+    String(h.sourceRecordId||'')===String(caseId||'') &&
+    Number.isFinite(Number(h.amount)) && Number(h.amount)>0 &&
+    !/reconciled/i.test(String(h.forecastStatus||''))
+  ).sort((a,b)=>String(b.forecastDate||'').localeCompare(String(a.forecastDate||'')) || Number(b.spId||0)-Number(a.spId||0));
+  return rows.length?Number(rows[0].amount):null;
+}
+function fm28CompletedRepairYM(c){
+  const current=todayISO().slice(0,7);
+  const latest=(c?.latest||c?.base||{}), closeYM=String(latest.serviceDate||c?.base?.serviceDate||'').slice(0,7);
+  // Completed work is real unresolved exposure. If its completion month is now
+  // historical and no invoice has arrived, carry it into the current open month.
+  if(!closeYM || closeYM<current)return current;
+  return closeYM;
+}
+function fm28RepairForecasts(){
+  const base=budgetBaseRepairReserve(),out=[];
+  for(const c of repairCaseBundles()){
+    if(fm28RepairCancelled(c))continue;
+    const sourceId=c.base.eventId, latest=c.latest||c.base,
+      issue=budgetInferIssue([c.base.description,...c.updates.map(x=>x.description)].join(' ')),
+      status=c.status||'New Request', ov=budgetManualOverride('Repair Case',sourceId),
+      closed=fm28RepairOperationallyClosed(c);
+
+    let amount=Math.round(base*budgetIssueMultiplier(issue)*budgetStatusMultiplier(status)*100)/100,
+      ym=closed?fm28CompletedRepairYM(c):budgetExpectedRepairYM(c),
+      confidence=/replacement recommended|waiting on parts/i.test(status)?'Low':'Medium',
+      basis=`Historical 75th percentile ${fmtMoney(base)} · ${issue} · ${status}`,
+      forecastType=ov?'Revised Estimate':'Initial Estimate',
+      type='Open Repair';
+
+    if(ov){
+      amount=Number(ov.amount);confidence=ov.confidence||'High';basis=`Manual override: ${ov.overrideReason||'User knowledge'}`;
+      const ovYM=budgetYM(ov.year,ov.monthNumber),current=todayISO().slice(0,7);
+      ym=closed&&ovYM<current?current:ovYM;
+    }else if(closed){
+      const frozen=fm28LatestRepairForecastAmount(sourceId);
+      if(frozen!=null)amount=frozen;
+      type='Completed Repair — Awaiting Invoice';
+      forecastType='Completed / Awaiting Invoice';
+      confidence='High';
+      basis=`Repair completed · invoice not yet received · last-known estimate ${fmtMoney(amount)}`;
+    }
+
+    out.push({key:`repair:${sourceId}`,account:BUDGET_ACCOUNT_6022,type,forecastType,
+      forkliftId:c.base.forkliftId,workroom:c.base.workroom||fleet.find(f=>f.id===c.base.forkliftId)?.workroom||'',
+      vendor:latest.vendor||c.base.vendor||'',amount,ym,confidence,issue,
+      status:closed?'Completed / Awaiting Invoice':status,sourceType:'Repair Case',sourceId,basis,
+      description:c.base.description||'',canOverride:true,date:latest.serviceDate||c.base.serviceDate||''});
+  }
+  return out;
+}
+
+// Replace only the repair-estimate source. PM and rental pipelines remain v2.7.
+fm2HistoricalEstimateDrivers=function(ym){
+  if(!budgetIsPrior(ym)){
+    const repairs=fm28RepairForecasts();
+    const pms=(typeof budgetPMForecasts==='function')?budgetPMForecasts():[];
+    const rentals=(typeof fmFinBaseBudgetRentalForecasts==='function')?fmFinBaseBudgetRentalForecasts():[];
+    return [...repairs,...pms,...rentals].filter(x=>String(x.ym||'')===String(ym||''));
+  }
+  return budgetHistoricalForecastDrivers(ym).filter(x=>
+    !/^Pending /i.test(String(x.forecastType||'')) &&
+    !/Invoice Received/i.test(String(x.type||''))
+  );
+};
+
+try{ if(typeof renderBudget==='function')renderBudget(); }
+catch(e){ console.warn('v2.8 completed-repair exposure refresh skipped:',e); }
+</script>
+
 </body>
 </html>
