@@ -6249,5 +6249,74 @@ window.renderImportPreview=renderImportPreview;
 })();
 
 </script>
+
+
+<script id="fm-financial-revamp-v210-prior-month-actual-only">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.10
+   PRIOR MONTH = ACCOUNTING REALITY, NOT A RE-RUN OF OLD FORECASTS
+
+   Fixes the September regression exposed after v2.9:
+   - Historical repair/PM forecast rows are retained in Forecast History.
+   - They must NOT be added back on top of NetSuite actuals when viewing a
+     prior month later.
+   - For any prior month, the Budget headline / Month Tracker projection is
+     the latest NetSuite posted actual. Forecast-at-close remains available
+     only as history / accuracy context.
+   - Unresolved operational exposure belongs in the current/future month
+     workflow (including approved carry-forward exposure), not retroactively
+     inside the old month's projected total.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.10-prior-month-actual-only';
+
+const fm210BaseBudgetSummary=budgetSummary;
+budgetSummary=function(ym){
+  const x=fm210BaseBudgetSummary(ym);
+  if(typeof budgetIsPrior==='function' && budgetIsPrior(ym)){
+    x.f22=0;
+    x.f23=0;
+    x.projected22=x.a22;
+    x.projected23=x.a23;
+    x.remaining22=x.b22.amount-x.a22;
+    x.remaining23=x.b23.amount-x.a23;
+    x.risk22=budgetRisk(x.projected22,x.b22.amount);
+    x.risk23=budgetRisk(x.projected23,x.b23.amount);
+    x.drivers=[];
+  }
+  return x;
+};
+
+const fm210BaseRenderBudget=renderBudget;
+renderBudget=function(){
+  const r=fm210BaseRenderBudget();
+  if(typeof budgetIsPrior==='function' && budgetIsPrior(budgetSelectedMonth)){
+    const note=document.getElementById('budget-context-note');
+    if(note) note.innerHTML='<b>Historical month — NetSuite accounting reality.</b> Projected/final spend now equals the latest NetSuite posted actual. Historical estimates and month-end forecast snapshots remain in Forecast History / Accuracy only and add $0 to this prior-month total.';
+
+    const grid=document.getElementById('budget-account-grid');
+    if(grid){
+      const x=budgetSummary(budgetSelectedMonth);
+      grid.innerHTML=[
+        ['6022 Repair & Maintenance',x.b22.amount,x.a22,x.projected22,x.remaining22,x.risk22],
+        ['6023 Forklift Rental',x.b23.amount,x.a23,x.projected23,x.remaining23,x.risk23]
+      ].map(a=>`<div class="budget-account"><h3>${a[0]}</h3><div class="budget-line"><span>Monthly Budget</span><strong>${fmtMoney(a[1])}</strong></div><div class="budget-line"><span>NetSuite Posted</span><strong>${fmtMoney(a[2])}</strong></div><div class="budget-line"><span>Invoices Awaiting NetSuite</span><strong>${fmtMoney(0)}</strong></div><div class="budget-line"><span>Open Estimates / PM Forecasts</span><strong>${fmtMoney(0)}</strong></div><div class="budget-line"><span>Carry-Forward Exposure</span><strong>${fmtMoney(0)}</strong></div><div class="budget-line"><span>Projected Month End</span><strong>${fmtMoney(a[3])}</strong></div><div class="budget-line"><span>Remaining vs Budget</span><strong>${fmtMoney(a[4])}</strong></div><div class="budget-progress"><div class="${a[5].bar}" style="width:${Math.min(100,a[5].pct*100)}%"></div></div><span class="budget-risk ${a[5].cls}">${a[5].label}</span></div>`).join('');
+    }
+
+    // Keep Forecast History / Accuracy as the audit trail; the live Month Tracker
+    // for a prior month should show accounting actuals only.
+    const tracker=document.getElementById('fm-month-tracker');
+    if(tracker){
+      const x=budgetSummary(budgetSelectedMonth);
+      const cards=tracker.querySelector('.fm2-tracker-cards');
+      if(cards) cards.innerHTML=`<div class="service-card"><div class="label">6022 NetSuite Posted</div><div class="value">${fmtMoney(x.a22)}</div></div><div class="service-card"><div class="label">6022 Awaiting NetSuite</div><div class="value">${fmtMoney(0)}</div></div><div class="service-card"><div class="label">6022 Estimates / PM</div><div class="value">${fmtMoney(0)}</div></div><div class="service-card"><div class="label">6022 Projected</div><div class="value">${fmtMoney(x.a22)}</div></div><div class="service-card"><div class="label">6023 Projected</div><div class="value">${fmtMoney(x.a23)}</div></div>`;
+    }
+  }
+  return r;
+};
+
+try{ if(typeof renderBudget==='function') renderBudget(); }
+catch(e){ console.warn('v2.10 prior-month actual-only refresh skipped:',e); }
+</script>
+
 </body>
 </html>
