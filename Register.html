@@ -5484,5 +5484,127 @@ budgetOpenCloseModal=function(){
   return r;
 };
 </script>
+
+<script id="fm-v251-invoice-parser-layout-fix">
+/* =====================================================================
+   FORKLIFT MANAGER — v2.5.1 PDF LAYOUT-AWARE INVOICE PARSER
+   - Reconstructs PDF text by visual lines instead of flattening page items
+   - Prevents header words such as INVOICE / DATE / SERVICED becoming values
+   - Crown-style Invoice / Invoice Date / Completed Date parsing hardened
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.5.1-invoice-parser-layout-fix';
+
+pdfText=async function(file){
+  if(typeof pdfjsLib==='undefined')throw new Error('PDF reader did not load.');
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const buf=await file.arrayBuffer(),pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  const pages=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    const page=await pdf.getPage(p),c=await page.getTextContent();
+    const items=(c.items||[]).filter(x=>String(x.str||'').trim()).map(x=>({
+      str:String(x.str||'').trim(),
+      x:Number(x.transform?.[4]||0),
+      y:Number(x.transform?.[5]||0)
+    })).sort((a,b)=>Math.abs(b.y-a.y)>2?b.y-a.y:a.x-b.x);
+    const lines=[];
+    for(const it of items){
+      let line=lines.find(l=>Math.abs(l.y-it.y)<=2);
+      if(!line){line={y:it.y,items:[]};lines.push(line);}
+      line.items.push(it);
+    }
+    lines.sort((a,b)=>b.y-a.y);
+    pages.push(lines.map(l=>l.items.sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ')).join('\n'));
+  }
+  return pages.join('\n\n');
+};
+
+function fm251FirstValid(text,patterns,validator){
+  for(const rx of patterns){
+    for(const m of String(text||'').matchAll(rx)){
+      const v=String(m[1]||'').trim();
+      if(v && (!validator || validator(v)))return v;
+    }
+  }
+  return '';
+}
+
+extractWorkOrder=function(text){
+  const raw=String(text||'').replace(/\r/g,'\n');
+  const clean=raw.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n');
+  const flat=clean.replace(/\s+/g,' ');
+
+  const serial=fm251FirstValid(clean,[
+    /\bS\s*\/\s*N\s*:\s*([A-Z0-9-]{6,})\b/ig,
+    /\bSerial(?:\s+Number)?\s*:\s*([A-Z0-9-]{6,})\b/ig,
+    /\b([A-Z]\d{3}[A-Z]\d{5}[A-Z])\b/ig
+  ],v=>!/^(SERVICED|NUMBER|DATE|INVOICE)$/i.test(v)).toUpperCase();
+
+  // Prefer invoice values that are actually numeric/document-like, never the printed word INVOICE.
+  const invoiceNumber=fm251FirstValid(clean,[
+    /\bInvoice\s*:\s*([0-9]{5,})\b/ig,
+    /\bInvoice\s*(?:No\.?|Number|#)\s*:?\s*([A-Z0-9-]{4,})\b/ig
+  ],v=>!/^(INVOICE|DATE|NUMBER)$/i.test(v));
+
+  const workOrder=fm251FirstValid(clean,[
+    /\bWork\s*Order\s*:\s*([A-Z0-9-]{3,})\b/ig,
+    /\bWork\s*Order\s*(?:No\.?|Number|#)\s*:?\s*([A-Z0-9-]{3,})\b/ig
+  ],v=>!/^(DATE|NUMBER|INVOICE)$/i.test(v));
+
+  const invoiceDateUS=fm251FirstValid(clean,[
+    /\bInvoice\s+Date\s*:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/ig
+  ]);
+
+  // Crown and similar invoices often render the table header "Completed Date" on one visual line
+  // and the actual value on the immediately following row. Search a bounded window after the label.
+  let completedDateUS=fm251FirstValid(clean,[
+    /\bCompleted\s+Date\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/ig,
+    /\bDate\s+Completed\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/ig
+  ]);
+  if(!completedDateUS){
+    const idx=clean.search(/\bCompleted\s+Date\b/i);
+    if(idx>=0){
+      const tail=clean.slice(idx,idx+300);
+      const m=tail.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+      if(m)completedDateUS=m[1];
+    }
+  }
+
+  const startedDateUS=fm251FirstValid(clean,[/\bDate\s+Started\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\b/ig]);
+  const invoiceDate=fm25NormDateUS(invoiceDateUS);
+  const completedDate=fm25NormDateUS(completedDateUS);
+  const fallbackDate=fm25NormDateUS(startedDateUS);
+
+  const hm=flat.match(/\bHours\s*:?\s*([\d,]+(?:\.\d+)?)\b/i);
+  let vendor='';
+  if(/crown lift trucks|crown equipment|crown\.com/i.test(flat))vendor='Crown';
+
+  let amount=null;
+  for(const rx of [
+    /\bTotal\s+Due\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bAmount\s+Due\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bGrand\s+Total\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig,
+    /\bTotal\s*:?\s*\$?\s*([\d,]+\.\d{2})\b/ig
+  ]){
+    const vals=[...flat.matchAll(rx)].map(m=>Number(String(m[1]).replace(/,/g,''))).filter(Number.isFinite);
+    if(vals.length){amount=vals[vals.length-1];break;}
+  }
+
+  const isPM=/planned\s+maint|planned\s+maintenance|preventive\s+maintenance|preventative\s+maintenance|\bPM\b/i.test(flat);
+  const reference=invoiceNumber||workOrder||'';
+  return {
+    serial,
+    hours:hm?Number(hm[1].replace(/,/g,'')):null,
+    reference,
+    invoiceNumber,
+    workOrder,
+    invoiceDate,
+    completedDate,
+    date:invoiceDate||completedDate||fallbackDate,
+    vendor,isPM,amount,
+    isInvoice:!!invoiceNumber||/\bINVOICE\b/i.test(flat)
+  };
+};
+</script>
+
 </body>
 </html>
