@@ -4834,5 +4834,104 @@ fm2InstallExports();
 @media(max-width:1150px){.fm2-tracker-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 
+
+
+<script id="oct06-financial-workflow-v21-cleanup">
+/* =====================================================================
+   OCT 6, 2026 — FINANCIAL WORKFLOW REVAMP v2.1 CLEANUP
+   - Budget Drivers shows authoritative NetSuite actuals + unresolved best-known exposure only.
+   - Legacy operational-created Transactions are not displayed as Accounting Actual.
+   - Budget Drivers and Forecast History / Accuracy both have CSV + Excel exports.
+   - Forecast History shows explicit status, reconciliation document, actual, and variance.
+   - Tables remain click-to-sort; exports follow the currently displayed/sorted table.
+   ===================================================================== */
+window.FM_FINANCIAL_WORKFLOW_VERSION='2026-10-06-v2.1-cleanup';
+
+function fm21HistoryStatus(h){
+  const explicit=String(h?.forecastStatus||'').trim();
+  if(explicit)return explicit;
+  const ft=String(h?.forecastType||'').trim();
+  if(ft==='Pre-NetSuite Reconciliation'||ft==='Month-End Snapshot'||ft==='Month Close')return 'Snapshot';
+  if(h?.isCurrent)return 'Active Forecast';
+  return 'Historical / Superseded';
+}
+function fm21HistoryRows(ym){
+  const p=budgetYMParts(ym);
+  return budgetHistory.filter(h=>h.year===p.year&&h.monthNumber===p.month)
+    .sort((a,b)=>String(b.forecastDate||'').localeCompare(String(a.forecastDate||''))||Number(b.spId||0)-Number(a.spId||0));
+}
+function fm21HistoryTableHTML(rows){
+  return '<thead><tr><th>Date</th><th>Forklift</th><th>Type</th><th>Account</th><th>Forecast Amount</th><th>Confidence</th><th>Source</th><th>Status</th><th>Reconciled NetSuite Doc</th><th>Actual Amount</th><th>Variance</th><th>Notes</th></tr></thead><tbody>'+
+    rows.map(h=>{
+      const actual=h.reconciledActualAmount==null?null:Number(h.reconciledActualAmount),amt=Number(h.amount||0),variance=actual==null?null:actual-amt;
+      return `<tr><td>${fmtDate(fm2Date(h.forecastDate))}</td><td class="mono">${esc(h.forkliftId||'—')}</td><td>${esc(h.forecastType||'—')}</td><td>${h.account===BUDGET_ACCOUNT_6023?'6023':'6022'}</td><td class="mono">${fmtMoney(amt)}</td><td>${esc(h.confidence||'—')}</td><td>${esc(h.sourceType||'—')}</td><td>${esc(fm21HistoryStatus(h))}</td><td class="mono">${esc(h.reconciledNetSuiteDocument||'—')}</td><td class="mono">${actual==null?'—':fmtMoney(actual)}</td><td class="mono">${variance==null?'—':fmtMoney(variance)}</td><td style="white-space:normal;min-width:300px">${esc(h.overrideReason||h.notes||'—')}</td></tr>`;
+    }).join('')+(rows.length?'':'<tr><td colspan="12" class="empty">No forecast history for this month</td></tr>')+'</tbody>';
+}
+function fm21DriverRows(ym){
+  const x=budgetSummary(ym),rows=[];
+  for(const a of fm2ActualGroups(ym))rows.push({
+    type:'NetSuite Actual',account:a.account,forkliftId:a.forkliftId,workroom:a.workroom,vendor:a.vendor,
+    amount:Number(a.amount||0),confidence:'Actual',basis:a.invoiceNumber||'NetSuite posted accounting document',sourceType:'NetSuite',sourceId:a.invoiceNumber||a.key,canOverride:false
+  });
+  for(const d of (x.drivers||[]))rows.push({...d,type:d.type||d.forecastType||'Forecast'});
+  return rows.sort((a,b)=>Math.abs(Number(b.amount||0))-Math.abs(Number(a.amount||0))||String(a.forkliftId||'').localeCompare(String(b.forkliftId||''),undefined,{numeric:true}));
+}
+function fm21DriverTableHTML(rows){
+  return '<thead><tr><th>Type</th><th>Account</th><th>Forklift</th><th>Workroom</th><th>Vendor</th><th>Amount</th><th>Confidence</th><th>Basis</th><th></th></tr></thead><tbody>'+
+    rows.map(d=>`<tr><td>${esc(d.type||'—')}</td><td>${fm2DriverAccountCode(d)}</td><td class="mono">${esc(d.forkliftId||'—')}</td><td>${esc(d.workroom||'—')}</td><td>${esc(d.vendor||'—')}</td><td class="mono">${fmtMoney(Number(d.amount||0))}</td><td class="${budgetConfidenceClass(d.confidence)}">${esc(d.confidence||'—')}</td><td style="white-space:normal;min-width:320px">${esc(d.basis||d.description||'—')}</td><td>${d.canOverride?`<button class="copy-btn" onclick="budgetOverride('${String(d.sourceType||'').replace(/'/g,"\\'")}','${String(d.sourceId||'').replace(/'/g,"\\'")}','${budgetSelectedMonth}',${Number(d.amount)||0})">Override</button>`:''}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="9" class="empty">No posted actuals or unresolved budget exposure for this month</td></tr>')+'</tbody>';
+}
+function fm21InstallBudgetPanelExports(){
+  const driver=document.getElementById('budget-driver-table')?.closest('.panel');
+  if(driver){
+    const head=driver.querySelector('.panel-head');
+    if(head&&!document.getElementById('fm21-driver-actions')){
+      const a=document.createElement('div');a.id='fm21-driver-actions';a.className='section-actions';
+      a.innerHTML='<button class="btn" onclick="fm2ExportTableCSV(\'budget-driver-table\',`Forklift_Budget_Drivers_${budgetSelectedMonth}.csv`)">CSV</button><button class="btn" onclick="fm2ExportTableExcel(\'budget-driver-table\',`Forklift_Budget_Drivers_${budgetSelectedMonth}.xlsx`,\'Budget Drivers\')">Excel</button>';
+      head.appendChild(a);
+    }
+  }
+  const hist=document.getElementById('budget-history-table')?.closest('.panel');
+  if(hist){
+    const head=hist.querySelector('.panel-head');
+    if(head&&!document.getElementById('fm21-history-actions')){
+      const a=document.createElement('div');a.id='fm21-history-actions';a.className='section-actions';
+      a.innerHTML='<button class="btn" onclick="fm2ExportTableCSV(\'budget-history-table\',`Forklift_Forecast_History_${budgetSelectedMonth}.csv`)">CSV</button><button class="btn" onclick="fm2ExportTableExcel(\'budget-history-table\',`Forklift_Forecast_History_${budgetSelectedMonth}.xlsx`,\'Forecast History\')">Excel</button>';
+      head.appendChild(a);
+    }
+  }
+}
+const fm21BaseRenderBudget=renderBudget;
+renderBudget=function(){
+  const r=fm21BaseRenderBudget();
+  const driverTable=document.getElementById('budget-driver-table');
+  if(driverTable)driverTable.innerHTML=fm21DriverTableHTML(fm21DriverRows(budgetSelectedMonth));
+  const driverPanel=driverTable?.closest('.panel');
+  if(driverPanel){
+    const t=driverPanel.querySelector('.panel-title');if(t)t.textContent='Budget Drivers — Posted + Current Best-Known Exposure';
+    const s=driverPanel.querySelector('.panel-head .muted');if(s)s.textContent='NetSuite actuals plus unresolved invoices/estimates only. Legacy operational Transactions are excluded as accounting actuals.';
+  }
+  const histTable=document.getElementById('budget-history-table');
+  if(histTable)histTable.innerHTML=fm21HistoryTableHTML(fm21HistoryRows(budgetSelectedMonth));
+  const histPanel=histTable?.closest('.panel');
+  if(histPanel){const s=histPanel.querySelector('.panel-head .muted');if(s)s.textContent='Estimate → revised estimate → invoice/known cost → NetSuite actual. Reconciled forecasts remain for accuracy analysis.';}
+  fm21InstallBudgetPanelExports();
+  fm2BindSortableTables();
+  return r;
+};
+
+// Make sure the enhanced controls exist immediately if Budget is already visible.
+try{renderBudget();}catch(e){console.warn('v2.1 budget cleanup initial render skipped:',e);}
+
+(function(){
+  const exp=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Reports and exports')?.parentElement?.querySelector('.help-body');
+  if(exp)exp.insertAdjacentHTML('beforeend','<p><b>Budget detail exports:</b> Budget Drivers and Forecast History / Accuracy each have dedicated CSV and Excel exports. Their tables are sortable, and export output follows the current displayed sort order.</p>');
+})();
+</script>
+<style id="oct06-financial-workflow-v21-cleanup-styles">
+#fm21-driver-actions,#fm21-history-actions{display:flex;gap:6px;align-items:center;margin-left:auto}
+#budget-history-table{min-width:1650px}
+#budget-driver-table{min-width:1450px}
+</style>
+
 </body>
 </html>
