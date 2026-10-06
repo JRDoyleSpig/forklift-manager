@@ -6318,5 +6318,138 @@ try{ if(typeof renderBudget==='function') renderBudget(); }
 catch(e){ console.warn('v2.10 prior-month actual-only refresh skipped:',e); }
 </script>
 
+
+<script id="fm-financial-revamp-v211-monthly-summary-export">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.11
+   MONTHLY TRANSACTION SUMMARY EXPORT
+
+   Adds a month-specific Excel export with:
+   - Summary by Workroom + Forklift
+   - 6022 Repair & Maintenance total
+   - 6023 Forklift Rental total
+   - Combined total
+   - Full transaction detail used to build those totals
+
+   Uses the same accounting-authority rules as the Budget page so the export
+   ties to the monthly NetSuite-posted totals and excludes provisional rows.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.11-monthly-summary-export';
+
+function fm211Authority(t){
+  if(typeof fmFinAuthority==='function') return fmFinAuthority(t);
+  if(typeof finActive==='function') return finActive(t);
+  return true;
+}
+function fm211Account(t){
+  if(typeof fmFinAccount==='function') return fmFinAccount(t);
+  return (typeof isRentalTx==='function' && isRentalTx(t)) ? '6023' : '6022';
+}
+function fm211MonthTransactions(ym){
+  return transactions.filter(t=>fm211Authority(t) && String(t.transactionDate||'').startsWith(ym) && ['6022','6023'].includes(fm211Account(t)));
+}
+function fm211CleanWorkroom(v){
+  const s=String(v||'').trim();
+  return s||'—';
+}
+function fm211MonthlySummaryRows(ym){
+  const map=new Map();
+  for(const t of fm211MonthTransactions(ym)){
+    const fid=String(t.forkliftId||'').trim()||'—';
+    const workroom=fm211CleanWorkroom(t.workroom);
+    const key=`${workroom}|${fid}`;
+    const r=map.get(key)||{workroom,fid,repair:0,rental:0,count6022:0,count6023:0};
+    const amt=Number(t.amount||0);
+    if(fm211Account(t)==='6023'){r.rental+=amt;r.count6023++;}
+    else {r.repair+=amt;r.count6022++;}
+    map.set(key,r);
+  }
+  return [...map.values()].sort((a,b)=>a.workroom.localeCompare(b.workroom)||a.fid.localeCompare(b.fid,undefined,{numeric:true}));
+}
+function fm211AutoWidth(ws, rows){
+  if(!rows?.length)return;
+  const keys=Object.keys(rows[0]);
+  ws['!cols']=keys.map(k=>({wch:Math.min(42,Math.max(String(k).length,...rows.map(r=>String(r[k]??'').length))+2)}));
+}
+function fm211ExportMonthlySummary(){
+  if(typeof XLSX==='undefined')return alert('Excel library did not load.');
+  const ym=budgetSelectedMonth;
+  const tx=fm211MonthTransactions(ym);
+  const groups=fm211MonthlySummaryRows(ym);
+  const total6022=tx.filter(t=>fm211Account(t)==='6022').reduce((s,t)=>s+Number(t.amount||0),0);
+  const total6023=tx.filter(t=>fm211Account(t)==='6023').reduce((s,t)=>s+Number(t.amount||0),0);
+
+  const summaryRows=groups.map(r=>({
+    'Workroom':r.workroom,
+    'Forklift ID':r.fid,
+    '6022 Repair & Maintenance':Number(r.repair.toFixed(2)),
+    '6023 Forklift Rental':Number(r.rental.toFixed(2)),
+    'Combined Total':Number((r.repair+r.rental).toFixed(2)),
+    '6022 Transaction Lines':r.count6022,
+    '6023 Transaction Lines':r.count6023
+  }));
+  summaryRows.push({
+    'Workroom':'GRAND TOTAL','Forklift ID':'',
+    '6022 Repair & Maintenance':Number(total6022.toFixed(2)),
+    '6023 Forklift Rental':Number(total6023.toFixed(2)),
+    'Combined Total':Number((total6022+total6023).toFixed(2)),
+    '6022 Transaction Lines':tx.filter(t=>fm211Account(t)==='6022').length,
+    '6023 Transaction Lines':tx.filter(t=>fm211Account(t)==='6023').length
+  });
+
+  const detailRows=tx
+    .slice()
+    .sort((a,b)=>String(a.transactionDate||'').localeCompare(String(b.transactionDate||''))||String(a.workroom||'').localeCompare(String(b.workroom||''))||String(a.forkliftId||'').localeCompare(String(b.forkliftId||''),undefined,{numeric:true}))
+    .map(t=>({
+      'Date':t.transactionDate||'',
+      'Account':fm211Account(t),
+      'Category':t.category||'',
+      'Workroom':fm211CleanWorkroom(t.workroom),
+      'Forklift ID':t.forkliftId||'',
+      'Vendor':t.vendor||'',
+      'Invoice / Reference':t.invoiceNumber||'',
+      'Amount':Number(Number(t.amount||0).toFixed(2)),
+      'Description':t.description||'',
+      'Notes':t.notes||''
+    }));
+
+  const rentalRows=detailRows.filter(r=>r['Account']==='6023');
+  const wb=XLSX.utils.book_new();
+  const cover=[
+    ['Forklift Monthly Transaction Summary'],
+    ['Month',typeof budgetMonthLabel==='function'?budgetMonthLabel(ym):ym],
+    [],
+    ['Account','Total'],
+    ['6022 Repair & Maintenance',total6022],
+    ['6023 Forklift Rental',total6023],
+    ['Combined',total6022+total6023]
+  ];
+  const wsCover=XLSX.utils.aoa_to_sheet(cover); wsCover['!cols']=[{wch:32},{wch:18}];
+  const wsSummary=XLSX.utils.json_to_sheet(summaryRows); fm211AutoWidth(wsSummary,summaryRows);
+  const wsDetail=XLSX.utils.json_to_sheet(detailRows); fm211AutoWidth(wsDetail,detailRows);
+  XLSX.utils.book_append_sheet(wb,wsCover,'Month Totals');
+  XLSX.utils.book_append_sheet(wb,wsSummary,'By Workroom & Forklift');
+  XLSX.utils.book_append_sheet(wb,wsDetail,'Transaction Detail');
+  if(rentalRows.length){const wsRent=XLSX.utils.json_to_sheet(rentalRows);fm211AutoWidth(wsRent,rentalRows);XLSX.utils.book_append_sheet(wb,wsRent,'6023 Rental Detail');}
+  XLSX.writeFile(wb,`Forklift_Monthly_Summary_${ym}.xlsx`);
+}
+
+(function fm211InstallButton(){
+  const actions=document.querySelector('#view-budget .section-actions');
+  if(actions && !document.getElementById('fm211-monthly-summary-btn')){
+    const b=document.createElement('button');
+    b.className='btn';
+    b.id='fm211-monthly-summary-btn';
+    b.textContent='Monthly Summary Excel';
+    b.onclick=fm211ExportMonthlySummary;
+    actions.appendChild(b);
+  }
+  const help=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Forklift Budget — 6022 vs 6023, forecasts, close, and reopen')?.parentElement?.querySelector('.help-body');
+  if(help && !document.getElementById('fm211-help')){
+    help.insertAdjacentHTML('beforeend','<p id="fm211-help"><b>Monthly Summary Excel</b> exports accounting-authority transactions for the selected month, summarized by Workroom + Forklift with separate 6022 repair/maintenance and 6023 rental totals, plus full transaction detail and a dedicated 6023 rental-detail sheet.</p>');
+  }
+})();
+</script>
+
 </body>
 </html>
