@@ -5979,5 +5979,275 @@ try{ if(typeof renderBudget==='function')renderBudget(); }
 catch(e){ console.warn('v2.8 completed-repair exposure refresh skipped:',e); }
 </script>
 
+
+<script id="fm-financial-revamp-v29-repair-case-reconciliation">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.9
+   REPAIR-CASE FINANCIAL RECONCILIATION + QUOTE APPROVAL
+
+   Locked rules:
+   - NetSuite is accounting authority, but never operationally closes a case.
+   - A repair case can reconcile to multiple NetSuite documents.
+   - Ambiguous case matches stop for review instead of guessing.
+   - App-generated repair estimates remain forecast exposure while unresolved.
+   - Vendor quote/estimate affects budget only when explicitly Approved.
+   - Pending / Not Approved vendor estimates remain in history but do not
+     replace the app-generated forecast.
+   - Completed repairs do not disappear financially. They remain exposure
+     until invoice/NetSuite evidence reconciles them.
+   - Existing NetSuite Transactions are re-evaluated on every load, so older
+     completed cases that were already billed do not reappear in later months.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.9-repair-case-financial-reconciliation';
+
+const FM29_APPROVED='Approved',FM29_PENDING='Pending Approval',FM29_REJECTED='Not Approved';
+
+function fm29Money(v){const n=Number(v);return Number.isFinite(n)?n:null;}
+function fm29NormVendor(v){return String(v||'').toLowerCase().replace(/\b(incorporated|inc|llc|corp|corporation|company|co|lift trucks?|equipment)\b/g,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+function fm29VendorCompatible(a,b){
+  if(!a||!b)return true;
+  try{if(typeof vendorMatches==='function'&&vendorMatches(a,b))return true;}catch(e){}
+  const x=fm29NormVendor(a),y=fm29NormVendor(b);return !!x&&!!y&&(x.includes(y)||y.includes(x));
+}
+function fm29CaseEvents(c){return [c.base,...(c.updates||[])].sort((a,b)=>String(a.serviceDate||'').localeCompare(String(b.serviceDate||''))||Number(a.spId||0)-Number(b.spId||0));}
+function fm29CaseRefs(c){return new Set(fm29CaseEvents(c).map(e=>String(e.reference||'').trim().toUpperCase()).filter(Boolean));}
+function fm29CaseVendors(c){return [...new Set(fm29CaseEvents(c).map(e=>String(e.vendor||'').trim()).filter(Boolean))];}
+function fm29CaseClosed(c){return ['repaired / closed','repaired / resolved'].includes(String(c?.status||'').toLowerCase());}
+function fm29CaseCancelled(c){return ['cancelled','cancelled / no longer needed'].includes(String(c?.status||'').toLowerCase());}
+function fm29CaseStart(c){return String(c?.base?.serviceDate||'').slice(0,10);}
+function fm29CaseEnd(c){return fm29CaseClosed(c)?String(c?.latest?.serviceDate||c?.base?.serviceDate||'').slice(0,10):'';}
+function fm29DateAdd(iso,days){if(!iso)return '';const d=new Date(iso+'T00:00:00');if(Number.isNaN(d.getTime()))return '';d.setDate(d.getDate()+days);return d.toISOString().slice(0,10);}
+function fm29DateInCaseWindow(date,c){
+  if(!date)return false;const start=fm29CaseStart(c);if(start&&date<fm29DateAdd(start,-7))return false;
+  const end=fm29CaseEnd(c);if(end&&date>fm29DateAdd(end,75))return false;
+  return true;
+}
+function fm29EventMeta(e){
+  const txt=[e?.reconciliationNotes,e?.notes,e?.description].filter(Boolean).join(' | ');
+  const kind=(txt.match(/Financial Amount Type:\s*([^|]+)/i)||[])[1]?.trim()||'';
+  const approval=(txt.match(/Approval Status:\s*([^|]+)/i)||[])[1]?.trim()||'';
+  const amtTxt=(txt.match(/(?:Approved Estimate Amount|Quote Amount|Estimate Amount|Financial Amount):\s*\$?([\d,]+(?:\.\d+)?)/i)||[])[1]||'';
+  const amount=amtTxt?Number(amtTxt.replaceAll(',','')):null;
+  return {kind,approval,amount:Number.isFinite(amount)?amount:null};
+}
+function fm29ApprovedEstimate(c){
+  const rows=fm29CaseEvents(c).map(e=>({e,m:fm29EventMeta(e)})).filter(x=>/estimate|quote/i.test(x.m.kind)&&x.m.approval===FM29_APPROVED&&x.m.amount!=null);
+  return rows.length?rows[rows.length-1]:null;
+}
+function fm29CasePendingInvoiceEvents(c){
+  const id=String(c.base.eventId||'');
+  return serviceEvents.filter(e=>repairCaseIdFromEvent(e)===id&&Number(e.vendorInvoiceAmount)>0&&fmFinUnresolvedStatus(e.accountingStatus||FM_INVOICE));
+}
+function fm29RepairAccountingRows(){
+  const pm=pmGroupSet();
+  return transactions.filter(t=>{
+    try{if(typeof fmFinAuthority==='function'&&!fmFinAuthority(t))return false;}catch(e){}
+    return !!t.forkliftId&&!isRentalTx(t)&&!isPM(t,pm)&&String(t.category||'').toLowerCase()!=='pm service';
+  });
+}
+function fm29CasesForTx(t,cases=repairCaseBundles()){
+  if(!t?.forkliftId||!t.transactionDate)return [];
+  const ref=String(t.invoiceNumber||'').trim().toUpperCase();
+  const same=cases.filter(c=>!fm29CaseCancelled(c)&&c.base.forkliftId===t.forkliftId&&fm29DateInCaseWindow(t.transactionDate,c));
+  const exact=same.filter(c=>ref&&fm29CaseRefs(c).has(ref));
+  if(exact.length)return exact;
+  return same.filter(c=>{
+    const vs=fm29CaseVendors(c);return !vs.length||!t.vendor||vs.some(v=>fm29VendorCompatible(v,t.vendor));
+  });
+}
+function fm29MatchedActualRows(c){
+  const allCases=repairCaseBundles(),rows=[];
+  for(const t of fm29RepairAccountingRows()){
+    if(t.forkliftId!==c.base.forkliftId)continue;
+    const ref=String(t.invoiceNumber||'').trim().toUpperCase();
+    if(ref&&fm29CaseRefs(c).has(ref)){rows.push(t);continue;}
+    const cand=fm29CasesForTx(t,allCases);
+    if(cand.length===1&&cand[0].base.eventId===c.base.eventId)rows.push(t);
+  }
+  return rows;
+}
+function fm29GroupRowsByDoc(rows){
+  const m=new Map();for(const t of rows){const k=String(t.invoiceNumber||t.transactionId||t.spId||'').trim().toUpperCase();if(!m.has(k))m.set(k,[]);m.get(k).push(t);}return m;
+}
+function fm29LatestInitialEstimate(c){
+  if(typeof fm28LatestRepairForecastAmount==='function'){
+    const x=fm28LatestRepairForecastAmount(c.base.eventId);if(x!=null)return Number(x);
+  }
+  const base=budgetBaseRepairReserve(),issue=budgetInferIssue([c.base.description,...(c.updates||[]).map(x=>x.description)].join(' '));
+  return Math.round(base*budgetIssueMultiplier(issue)*budgetStatusMultiplier(c.status||'New Request')*100)/100;
+}
+function fm29RepairFinancialState(c){
+  const actualRows=fm29MatchedActualRows(c),actualDocs=fm29GroupRowsByDoc(actualRows),actualTotal=Number(actualRows.reduce((s,t)=>s+Number(t.amount||0),0).toFixed(2));
+  const pending=fm29CasePendingInvoiceEvents(c),pendingTotal=Number(pending.reduce((s,e)=>s+Number(e.vendorInvoiceAmount||0),0).toFixed(2));
+  const approved=fm29ApprovedEstimate(c),initial=fm29LatestInitialEstimate(c),expectedTotal=approved?.m.amount??initial;
+  const closed=fm29CaseClosed(c);
+  let remaining=0,resolved=false;
+  if(closed){
+    if(approved?.m.amount!=null)remaining=Math.max(0,Number((approved.m.amount-actualTotal-pendingTotal).toFixed(2)));
+    else if(actualRows.length||pending.length)remaining=0;
+    else remaining=initial;
+    resolved=actualRows.length>0&&remaining<=.01&&pending.length===0;
+  }else{
+    if(pending.length&&!approved)remaining=0; // invoice is stronger than the app-generated guess
+    else remaining=Math.max(0,Number((expectedTotal-actualTotal-pendingTotal).toFixed(2)));
+  }
+  return {actualRows,actualDocs,actualTotal,pending,pendingTotal,approved,initial,expectedTotal,remaining,resolved,closed};
+}
+
+/* ---------- Repair update UI: quote / estimate approval ---------- */
+function fm29InstallRepairFinancialUI(){
+  if(document.getElementById('ru-financial-kind'))return;
+  const details=document.getElementById('ru-expense-lines')?.closest('details');if(!details)return;
+  const help=details.querySelector('.muted');if(help)help.textContent='Use this for a vendor estimate/quote or a real invoice amount. Vendor estimates affect the budget only when explicitly Approved. Invoices become pending exposure until NetSuite posts.';
+  const box=document.createElement('div');box.id='fm29-repair-financial-controls';box.className='form-grid';box.style.margin='8px 0 10px';
+  box.innerHTML=`<div class="form-group"><label class="form-label">Financial Amount Type</label><select class="form-input" id="ru-financial-kind" onchange="fm29RefreshApprovalUI()"><option value="">None / informational only</option><option>Estimate / Quote</option><option>Invoice</option></select></div><div class="form-group" id="ru-approval-wrap"><label class="form-label">Estimate Approval</label><select class="form-input" id="ru-approval-status"><option>${FM29_PENDING}</option><option>${FM29_APPROVED}</option><option>${FM29_REJECTED}</option></select><div class="muted" style="font-size:9px;margin-top:3px">Only Approved vendor estimates replace the app-generated forecast.</div></div>`;
+  details.querySelector('div[style*="margin-top:10px"]')?.prepend(box);
+}
+function fm29RefreshApprovalUI(){const kind=formVal('ru-financial-kind'),w=document.getElementById('ru-approval-wrap');if(w)w.style.display=kind==='Estimate / Quote'?'':'none';}
+window.fm29RefreshApprovalUI=fm29RefreshApprovalUI;
+const fm29BaseOpenRepairUpdate=openRepairUpdate;
+openRepairUpdate=function(caseId){const r=fm29BaseOpenRepairUpdate(caseId);fm29InstallRepairFinancialUI();setFormVal('ru-financial-kind','');setFormVal('ru-approval-status',FM29_PENDING);fm29RefreshApprovalUI();return r;};
+
+const fm29BaseSaveRepairUpdate=saveRepairUpdate;
+saveRepairUpdate=async function(){
+  fm29InstallRepairFinancialUI();
+  const caseId=String(activeRepairCaseId||''),date=formVal('ru-date'),desc=formVal('ru-description').trim(),kind=formVal('ru-financial-kind'),approval=formVal('ru-approval-status')||FM29_PENDING;
+  const originalLinesFn=repairUpdateExpenseLines,allLines=originalLinesFn(),repairLines=allLines.filter(x=>x.type!=='Rental'),amount=Number(repairLines.reduce((s,x)=>s+Number(x.amount||0),0).toFixed(2));
+  if(kind&&kind!=='None / informational only'&&!repairLines.length)return alert('Add at least one non-rental amount line for the selected Financial Amount Type.');
+  if(kind==='Invoice'&&amount<=0)return alert('Invoice requires a positive repair amount.');
+  if(kind==='Estimate / Quote'&&!approval)return alert('Choose Pending Approval, Approved, or Not Approved.');
+  // Estimates/quotes must never be mistaken for invoices by the older save path.
+  if(kind==='Estimate / Quote')repairUpdateExpenseLines=function(){return allLines.filter(x=>x.type==='Rental');};
+  try{await fm29BaseSaveRepairUpdate();}
+  finally{repairUpdateExpenseLines=originalLinesFn;}
+  if(!caseId||!kind)return;
+  try{
+    const token=await getToken();
+    const candidates=serviceEvents.filter(e=>repairCaseIdFromEvent(e)===caseId&&String(e.serviceDate||'')===String(date||'')&&String(e.description||'')===String(desc||'')).sort((a,b)=>Number(b.spId||0)-Number(a.spId||0));
+    const e=candidates[0]||serviceEvents.filter(e=>repairCaseIdFromEvent(e)===caseId).sort((a,b)=>Number(b.spId||0)-Number(a.spId||0))[0];
+    if(!e)return;
+    let recon=`Financial Amount Type: ${kind}`;
+    if(kind==='Estimate / Quote')recon+=` | Approval Status: ${approval} | Financial Amount: ${fmtMoney(amount)}`;
+    else recon+=` | Financial Amount: ${fmtMoney(amount)} | Awaiting NetSuite posting`;
+    const values={'Reconciliation Notes':recon};
+    if(kind==='Estimate / Quote')values['Accounting Status']=approval===FM29_APPROVED?FM_FORECAST:FM_NO_FIN;
+    else{values['Vendor Invoice Amount']=amount;values['Accounting Status']=FM_INVOICE;}
+    await fmFinPatchService(token,e.spId,values);tokenCache=null;await loadData(true);
+  }catch(err){console.error('Repair financial metadata save failed:',err);alert('The repair update was saved, but its financial approval metadata could not be saved. Please reopen the case and review it.');}
+};
+
+/* ---------- Authoritative repair forecast source ---------- */
+function fm29RepairForecasts(){
+  const out=[],current=todayISO().slice(0,7);
+  for(const c of repairCaseBundles()){
+    if(fm29CaseCancelled(c))continue;
+    const st=fm29RepairFinancialState(c);if(st.remaining<=.01)continue;
+    const latest=c.latest||c.base,closed=st.closed;
+    let ym=closed?current:budgetExpectedRepairYM(c);
+    if(!ym||ym<current)ym=current;
+    const approved=st.approved?.m.amount!=null;
+    const type=closed?'Completed Repair — Awaiting Reconciliation':(st.actualTotal>0?'Open Repair — Remaining Exposure':'Open Repair');
+    const forecastType=approved?'Approved Estimate / Quote':(closed?'Completed / Unreconciled':'Initial Estimate');
+    const basis=approved
+      ?`Approved vendor estimate ${fmtMoney(st.approved.m.amount)} · NetSuite matched ${fmtMoney(st.actualTotal)} · pending invoice ${fmtMoney(st.pendingTotal)} · remaining ${fmtMoney(st.remaining)}`
+      :closed
+        ?`Repair completed · no confirmed financial match yet · app estimate ${fmtMoney(st.initial)}`
+        :st.actualTotal>0
+          ?`App estimate ${fmtMoney(st.initial)} · NetSuite matched ${fmtMoney(st.actualTotal)} · remaining forecast ${fmtMoney(st.remaining)}`
+          :`App-generated initial estimate ${fmtMoney(st.initial)} · ${c.status||'New Request'}`;
+    out.push({key:`repair:${c.base.eventId}`,account:BUDGET_ACCOUNT_6022,type,forecastType,forkliftId:c.base.forkliftId,workroom:c.base.workroom||fleet.find(f=>f.id===c.base.forkliftId)?.workroom||'',vendor:latest.vendor||c.base.vendor||'',amount:st.remaining,ym,confidence:approved?'High':'Medium',issue:budgetInferIssue([c.base.description,...(c.updates||[]).map(x=>x.description)].join(' ')),status:closed?'Completed / Financially Unresolved':(c.status||'New Request'),sourceType:'Repair Case',sourceId:c.base.eventId,basis,description:c.base.description||'',canOverride:true,date:latest.serviceDate||c.base.serviceDate||'',caseId:c.base.eventId});
+  }
+  return out;
+}
+fm28RepairForecasts=fm29RepairForecasts;
+fm2HistoricalEstimateDrivers=function(ym){
+  if(!budgetIsPrior(ym)){
+    const repairs=fm29RepairForecasts(),pms=(typeof budgetPMForecasts==='function')?budgetPMForecasts():[],rentals=(typeof fmFinBaseBudgetRentalForecasts==='function')?fmFinBaseBudgetRentalForecasts():[];
+    return [...repairs,...pms,...rentals].filter(x=>String(x.ym||'')===String(ym||''));
+  }
+  return budgetHistoricalForecastDrivers(ym).filter(x=>!/^Pending /i.test(String(x.forecastType||''))&&!/Invoice Received/i.test(String(x.type||'')));
+};
+
+/* Case-aware best-known-value precedence. An actual for Repair A must not erase
+   the forecast for separate Repair B on the same forklift. */
+fm2BestKnownForecasts=function(ym){
+  const evidence=fm2OperationalEvidence(ym),actuals=fm2ActualGroups(ym),out=[];
+  const pendingEvidence=evidence.filter(e=>!e.posted&&!fm2IsCancelledStatus(e.accountingStatus));
+  for(const e of pendingEvidence){
+    const carry=String(e.accountingStatus||'')===FM_CARRY,driverYM=carry?fm2NextYM(ym):ym;
+    out.push({key:`op:${e.evidenceKey}`,account:e.account==='6023'?BUDGET_ACCOUNT_6023:BUDGET_ACCOUNT_6022,type:`${e.kind} — Awaiting NetSuite`,forecastType:e.kind,forkliftId:e.forkliftId,workroom:e.workroom,vendor:e.vendor,amount:Number(e.amount||0),ym:driverYM,confidence:'High',issue:'',status:carry?FM_CARRY:(e.accountingStatus||FM_INVOICE),sourceType:e.source,sourceId:e.serviceEventId||e.rentalId||e.reference||e.evidenceKey,basis:`${e.kind} ${e.reference||''} · operational amount ${fmtMoney(e.amount)} · awaiting NetSuite`,description:'Operational amount awaiting accounting',reference:e.reference,date:e.date,caseId:e.caseId||'',canOverride:false});
+  }
+  const invoicesByFidType={},actualByFidType={};
+  for(const e of evidence){const typ=e.account==='6023'?'rental':/pm/i.test(e.kind)?'pm':'repair';(invoicesByFidType[`${e.forkliftId}|${typ}`]??=[]).push(e);}
+  for(const a of actuals){const typ=a.account==='6023'?'rental':/pm/i.test(String(a.category||''))?'pm':'repair';(actualByFidType[`${a.forkliftId}|${typ}`]??=[]).push(a);}
+  for(const d0 of fm2HistoricalEstimateDrivers(ym)){
+    const d={...d0};if(d.ym&&d.ym!==ym)continue;
+    const typ=fm2DriverIsRental(d)?'rental':fm2DriverIsPM(d)?'pm':'repair';
+    if(typ==='repair'&&String(d.sourceType||'')==='Repair Case'){
+      // fm29RepairForecasts already subtracts matched actuals/invoices case-by-case.
+      if(Number(d.amount||0)>.01)out.push(d);continue;
+    }
+    const covered=(invoicesByFidType[`${d.forkliftId}|${typ}`]||[]).length||(actualByFidType[`${d.forkliftId}|${typ}`]||[]).length;
+    if(covered)continue;if(String(d.forecastStatus||'')==='Reconciled / Superseded')continue;d.reference=d.reference||d.sourceId||'';d.date=d.date||'';out.push(d);
+  }
+  const seen=new Set();return out.filter(d=>{const k=d.key||`${d.sourceType}|${d.sourceId}|${d.forkliftId}|${d.amount}`;if(seen.has(k))return false;seen.add(k);return true;});
+};
+budgetAllForecasts=function(){const base=todayISO().slice(0,7),all=[];for(let i=0;i<12;i++){const ym=budgetShiftYM(base,i);all.push(...fm2BestKnownForecasts(ym).filter(x=>x.ym===ym));}return all;};
+
+/* ---------- Completed repair financial follow-up ---------- */
+function fm29CompletedUnresolved(){return repairCaseBundles().filter(c=>fm29CaseClosed(c)&&!fm29CaseCancelled(c)).map(c=>({c,st:fm29RepairFinancialState(c)})).filter(x=>!x.st.resolved&&(x.st.remaining>.01||x.st.pending.length));}
+const fm29BaseRenderServiceView=renderServiceView;
+renderServiceView=function(){
+  const r=fm29BaseRenderServiceView();
+  const openPanel=document.getElementById('repair-cases-table')?.closest('.panel');if(!openPanel)return r;
+  let panel=document.getElementById('fm29-completed-financial-panel');if(!panel){panel=document.createElement('div');panel.id='fm29-completed-financial-panel';panel.className='panel';panel.style.marginBottom='14px';openPanel.insertAdjacentElement('afterend',panel);}
+  const rows=fm29CompletedUnresolved();
+  panel.innerHTML=`<div class="panel-head"><div class="panel-title">Completed Repairs Awaiting Financial Reconciliation</div><span class="muted" style="font-size:10px">Operationally complete, but still waiting for an invoice or confident NetSuite match</span></div><div class="service-table-wrap"><table><thead><tr><th>Forklift</th><th>Workroom</th><th>Completed</th><th>Vendor</th><th>Expected / Remaining</th><th>Matched NetSuite</th><th>Status</th></tr></thead><tbody>${rows.map(({c,st})=>`<tr><td class="mono">${esc(c.base.forkliftId||'—')}</td><td>${esc(c.base.workroom||'—')}</td><td>${fmtDate(c.latest.serviceDate||c.base.serviceDate)}</td><td>${esc(c.latest.vendor||c.base.vendor||'—')}</td><td class="mono">${fmtMoney(st.remaining||st.pendingTotal)}</td><td class="mono">${st.actualTotal?fmtMoney(st.actualTotal):'—'}</td><td>${st.pending.length?'Invoice Received — Awaiting NetSuite':'Completed — Unreconciled'}</td></tr>`).join('')+(rows.length?'':'<tr><td colspan="7" class="empty">No completed repairs are waiting for financial reconciliation.</td></tr>')}</tbody></table></div>`;
+  return r;
+};
+
+/* ---------- NetSuite importer: repair-case matching ---------- */
+function fm29CasesForGroup(g){
+  if(g.accountCode!=='6022'||g.category==='PM Service'||!g.forkliftId)return [];
+  const fake={forkliftId:g.forkliftId,transactionDate:g.transactionDate,invoiceNumber:g.invoiceNumber,vendor:g.vendor};
+  const cases=repairCaseBundles().filter(c=>!fm29CaseCancelled(c)&&c.base.forkliftId===g.forkliftId&&fm29DateInCaseWindow(g.transactionDate,c));
+  const ref=String(g.invoiceNumber||'').trim().toUpperCase(),exact=cases.filter(c=>ref&&fm29CaseRefs(c).has(ref));
+  if(exact.length)return exact;
+  return cases.filter(c=>{const vs=fm29CaseVendors(c);return !vs.length||!g.vendor||vs.some(v=>fm29VendorCompatible(v,g.vendor));});
+}
+const fm29BaseNsRecalcGroup=nsRecalcGroup;
+nsRecalcGroup=function(g){
+  fm29BaseNsRecalcGroup(g);
+  if(g.accountCode!=='6022'||g.category==='PM Service')return g;
+  let candidates=fm29CasesForGroup(g);g.repairCaseCandidates=candidates;
+  if(g.fm29ManualCaseId){const chosen=candidates.find(c=>c.base.eventId===g.fm29ManualCaseId)||repairCaseBundles().find(c=>c.base.eventId===g.fm29ManualCaseId);if(chosen){g.repairCaseMatch=chosen;g.action=g.existing?.kind==='exact-sum'?'skip':'import';g.exceptionReason='';if(!g.operationalMatch)g.operationalMatch=chosen.latest||chosen.base;return g;}}
+  if(candidates.length===1){g.repairCaseMatch=candidates[0];if(!g.operationalMatch)g.operationalMatch=candidates[0].latest||candidates[0].base;}
+  else if(candidates.length>1&&g.action==='import'){
+    g.action='exception';g.exceptionReason=`Multiple repair cases could match ${g.invoiceNumber||'this document'}. Choose the correct repair case.`;
+  }
+  return g;
+};
+window.nsRecalcGroup=nsRecalcGroup;
+window.fm29ChooseRepairCase=function(groupIndex,caseId){const g=nsImportGroups[groupIndex];if(!g)return;g.fm29ManualCaseId=caseId;renderImportPreview();};
+const fm29BaseRenderImportPreview=renderImportPreview;
+renderImportPreview=function(){
+  const r=fm29BaseRenderImportPreview();
+  const exceptions=nsImportGroups.filter(g=>g.action==='exception'),els=[...document.querySelectorAll('#import-modal .fm3-exception')];
+  exceptions.forEach((g,j)=>{
+    if(!g.repairCaseCandidates?.length||g.repairCaseCandidates.length<2||!els[j])return;
+    const idx=nsImportGroups.indexOf(g),wrap=document.createElement('div');wrap.style.gridColumn='1 / -1';wrap.innerHTML=`<label class="form-label" style="margin-top:4px">Repair Case Match</label><select class="import-select" onchange="fm29ChooseRepairCase(${idx},this.value)"><option value="">Choose repair case…</option>${g.repairCaseCandidates.map(c=>`<option value="${esc(c.base.eventId)}">${esc(c.base.eventId)} · ${fmtDate(c.base.serviceDate)} · ${esc((c.base.description||'').slice(0,80))}</option>`).join('')}</select>`;els[j].querySelector('.fm3-exception-grid')?.appendChild(wrap);
+  });
+  return r;
+};
+window.renderImportPreview=renderImportPreview;
+
+/* ---------- Help text ---------- */
+(function(){
+  const repair=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Repair Cases — the full workflow')?.parentElement?.querySelector('.help-body');
+  if(repair)repair.insertAdjacentHTML('beforeend','<p><b>Financial status is independent from operational status.</b> Completing a repair removes it from open operational follow-up but does not erase expected cost. Vendor estimates/quotes require Pending Approval, Approved, or Not Approved; only Approved estimates replace the app-generated budget forecast. Invoice amounts replace estimates, and NetSuite actuals reconcile the financial side without closing an operationally open repair.</p><p>Completed repairs with no confirmed financial match appear under <b>Completed Repairs Awaiting Financial Reconciliation</b>. Existing and newly imported NetSuite repair transactions are matched back to repair cases by reference first, then forklift/vendor/date when there is only one plausible case. One repair can reconcile to multiple accounting documents; ambiguous matches stop for review.</p>');
+  try{if(typeof renderServiceView==='function')renderServiceView();if(typeof renderBudget==='function')renderBudget();}catch(e){console.warn('v2.9 initial refresh skipped:',e);}
+})();
+
+</script>
 </body>
 </html>
