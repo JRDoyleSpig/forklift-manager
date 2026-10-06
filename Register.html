@@ -5171,5 +5171,122 @@ renderImportPreview=function(){
 };
 window.renderImportPreview=renderImportPreview;
 </script>
-</body>
+
+<script id="fm-v24-pm-aging-final-close">
+/* =====================================================================
+   Forklift Manager v2.4 — PM forecast aging + verified close behavior
+   - A missed PM can influence the budget for at most one carry month.
+   - Older unscheduled PMs remain visible on PM Schedule but stop inflating
+     future budget months until a real schedule/work order/invoice exists.
+   - Closed/verified months display NetSuite actual as final projected spend.
+   - Makes the completed-month reconciliation step easier to discover.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.4-pm-aging-final-close';
+
+function fm24YmIndex(ym){
+  const m=String(ym||'').match(/^(\d{4})-(\d{2})$/);
+  return m?Number(m[1])*12+(Number(m[2])-1):null;
+}
+function fm24DueYmFromPmForecast(x){
+  const m=String(x?.sourceId||'').match(/^PM:(#[^:]+):(\d{4}-\d{2}-\d{2})$/);
+  return m?m[2].slice(0,7):'';
+}
+function fm24HasConcretePmEvidence(forkliftId,dueISO){
+  const due=new Date(String(dueISO||'')+'T00:00:00');
+  if(Number.isNaN(due.getTime()))return false;
+  const start=new Date(due.getTime()-14*86400000), end=new Date(due.getTime()+75*86400000);
+  return serviceEvents.some(e=>{
+    if(e.forkliftId!==forkliftId)return false;
+    const t=String(e.serviceType||'').toLowerCase();
+    if(!t.includes('pm'))return false;
+    const d=new Date(String(e.serviceDate||'')+'T00:00:00');
+    if(Number.isNaN(d.getTime())||d<start||d>end)return false;
+    // A completed PM/service event or a real invoice is concrete evidence.
+    return Number(e.vendorInvoiceAmount)>0 || /complete|completed|performed|service event|pm/i.test(String(e.status||'')+' '+String(e.description||''));
+  });
+}
+
+/* Wrap the established PM forecast generator. Keep the scheduled cadence,
+   but do not let an overdue unscheduled PM roll forever. */
+const fm24BaseBudgetPMForecasts=budgetPMForecasts;
+budgetPMForecasts=function(){
+  const rows=fm24BaseBudgetPMForecasts();
+  const currentYM=todayISO().slice(0,7), curIdx=fm24YmIndex(currentYM);
+  return rows.filter(x=>{
+    const m=String(x?.sourceId||'').match(/^PM:(#[^:]+):(\d{4}-\d{2}-\d{2})$/);
+    if(!m)return true;
+    const dueISO=m[2], dueYM=dueISO.slice(0,7), dueIdx=fm24YmIndex(dueYM);
+    if(dueIdx==null||curIdx==null)return true;
+    // Future/current scheduled PM forecasts remain normal.
+    if(dueIdx>=curIdx)return true;
+    // A late PM gets ONE carry month after its due month.
+    if(curIdx-dueIdx<=1)return true;
+    // Older missed PMs only re-enter the budget when there is concrete PM
+    // evidence (service event / invoice). Operational urgency stays on PM page.
+    return fm24HasConcretePmEvidence(x.forkliftId,dueISO);
+  });
+};
+
+/* Because budgetAllForecasts captured the earlier PM function in some builds,
+   rebuild it with the current PM generator while preserving invoice precedence. */
+if(typeof fmFinPendingServiceDrivers==='function' && typeof fmFinPendingRentalDrivers==='function'){
+  budgetAllForecasts=function(){
+    const pendingS=fmFinPendingServiceDrivers(),pendingR=fmFinPendingRentalDrivers();
+    const repairCaseIds=new Set();
+    for(const e of serviceEvents){
+      if(!(Number(e.vendorInvoiceAmount)>0&&fmFinUnresolvedStatus(e.accountingStatus||FM_INVOICE)))continue;
+      const m=String(e.notes||'').match(/Repair Case ID:\s*([^|]+)/i);if(m)repairCaseIds.add(m[1].trim());
+    }
+    const pendingPM=pendingS.filter(x=>serviceEvents.find(e=>e.eventId===x.sourceId&&String(e.serviceType).toLowerCase()==='pm'));
+    let repairs=fmFinBaseBudgetRepairForecasts().filter(x=>!repairCaseIds.has(String(x.sourceId||'')));
+    let pms=budgetPMForecasts().filter(x=>!pendingPM.some(p=>p.forkliftId===x.forkliftId&&Math.abs(new Date((serviceEvents.find(e=>e.eventId===p.sourceId)?.serviceDate||todayISO())+'T00:00:00')-new Date(String(x.sourceId||'').split(':').pop()+'T00:00:00'))/86400000<=60));
+    let rentalEst=fmFinBaseBudgetRentalForecasts().filter(x=>!pendingR.some(p=>p.forkliftId===x.forkliftId));
+    return [...pendingS,...pendingR,...repairs,...pms,...rentalEst];
+  };
+}
+
+/* Closed month = final accounting reality. Forecast trail remains in History,
+   but the headline/projected amount becomes NetSuite actual. */
+const fm24BaseBudgetSummary=budgetSummary;
+budgetSummary=function(ym){
+  const x=fm24BaseBudgetSummary(ym);
+  const ci=(typeof budgetCloseInfo==='function')?budgetCloseInfo(ym):{closed:false};
+  if(ci?.closed){
+    x.f22=0;x.f23=0;
+    x.projected22=x.a22;x.projected23=x.a23;
+    x.remaining22=x.b22.amount-x.a22;x.remaining23=x.b23.amount-x.a23;
+    x.risk22=budgetRisk(x.a22,x.b22.amount);x.risk23=budgetRisk(x.a23,x.b23.amount);
+    x.drivers=[];
+  }
+  return x;
+};
+
+/* Discoverability: the completed monthly budget check already lives inside
+   Close Month. Rename the button so the workflow is obvious. */
+const fm24BaseRenderBudget=renderBudget;
+renderBudget=function(){
+  fm24BaseRenderBudget();
+  const b=document.getElementById('budget-close-btn');
+  if(b && b.textContent.trim()==='Close Month') b.textContent='Final Check / Close';
+  const ci=(typeof budgetCloseInfo==='function')?budgetCloseInfo(budgetSelectedMonth):{closed:false};
+  const note=document.getElementById('budget-context-note');
+  if(note && ci?.closed){
+    note.innerHTML='<b>Month Closed — Final Accounting.</b> Headline spend is final NetSuite actual. Forecasts/estimates remain only in Forecast History / Accuracy and add $0 to the closed month.';
+  } else if(note && budgetSelectedMonth===todayISO().slice(0,7)){
+    note.innerHTML += ' <span class="muted">Overdue PM forecasts may carry one month only; older unscheduled PMs remain on PM Schedule but no longer inflate future budget projections until real service/invoice evidence appears.</span>';
+  }
+};
+
+/* Close modal copy: emphasize final workbook check. */
+const fm24BaseBudgetOpenCloseModal=budgetOpenCloseModal;
+budgetOpenCloseModal=function(){
+  fm24BaseBudgetOpenCloseModal();
+  const title=document.querySelector('#budget-close-modal .modal-title');
+  if(title)title.textContent='Final Month Check / Close Forklift Budget';
+  const info=document.querySelector('#budget-close-modal .life-info');
+  if(info)info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Completed Monthly Budget</b> workbook below to verify final 6022/6023 budget and actual totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end projected/final spend; forecast history is retained for accuracy only.';
+};
+</script>
+
+\n<script id="fm-final-monthly-budget-label-20261006">\n(function(){\n  function relabelFinalMonthlyBudget(){\n    const b=document.getElementById('budget-close-btn');\n    if(b) b.textContent='Upload Final Monthly Budget / Close';\n    const title=document.querySelector('#budget-close-modal .modal-title');\n    if(title) title.textContent='Final Monthly Budget Check / Close';\n    const info=document.querySelector('#budget-close-modal .life-info');\n    if(info) info.innerHTML='Final month workflow: <b>1)</b> confirm/review the monthly NetSuite transaction import, <b>2)</b> upload the <b>Final Monthly Budget</b> workbook (your completed monthly budget file with actuals) to verify final 6022/6023 budget and accounting totals, then <b>3)</b> close the month. After close, the Budget page shows final NetSuite actual as the month-end final spend; forecast history remains for accuracy analysis only.';\n    const wrap=document.getElementById('budget-close-reconcile-wrap');\n    if(wrap){\n      const step=wrap.querySelector('.budget-recon-step');\n      if(step){\n        const btag=step.querySelector('b');\n        if(btag) btag.textContent='2. Upload Final Monthly Budget';\n        const muted=step.querySelector('.muted');\n        if(muted) muted.textContent='Use the final completed monthly budget workbook with actuals after the monthly NetSuite transaction import. The app checks the final 6022/6023 budget and accounting actuals before the month can be closed.';\n      }\n      const fileLabel=wrap.querySelector('label.file-btn');\n      if(fileLabel){\n        const input=fileLabel.querySelector('input');\n        fileLabel.childNodes.forEach(n=>{if(n.nodeType===3)n.textContent='';});\n        fileLabel.insertBefore(document.createTextNode('Choose Final Monthly Budget'), input||null);\n      }\n    }\n    const save=document.getElementById('budget-close-save');\n    if(save) save.textContent='Close Verified Month';\n  }\n  const oldOpen=window.budgetOpenCloseModal;\n  if(typeof oldOpen==='function'){\n    window.budgetOpenCloseModal=function(){\n      const r=oldOpen.apply(this,arguments);\n      setTimeout(relabelFinalMonthlyBudget,0);\n      return r;\n    };\n  }\n  const oldRender=window.renderBudget;\n  if(typeof oldRender==='function'){\n    window.renderBudget=function(){\n      const r=oldRender.apply(this,arguments);\n      relabelFinalMonthlyBudget();\n      return r;\n    };\n  }\n  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',relabelFinalMonthlyBudget);\n  else relabelFinalMonthlyBudget();\n})();\n</script>\n</body>
 </html>
