@@ -4933,5 +4933,156 @@ try{renderBudget();}catch(e){console.warn('v2.1 budget cleanup initial render sk
 #budget-driver-table{min-width:1450px}
 </style>
 
+<style id="fm-auto-ns-import-styles">
+.fm3-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin:10px 0 14px}.fm3-card{border:1px solid var(--border);border-radius:9px;padding:10px;background:var(--card)}.fm3-card .k{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}.fm3-card .v{font-size:21px;font-weight:800;margin-top:4px}.fm3-good{color:var(--good)}.fm3-warn{color:var(--warn)}.fm3-auto-note{padding:10px 12px;border:1px solid rgba(34,197,94,.28);background:rgba(34,197,94,.08);border-radius:8px;font-size:11px;margin-bottom:12px}.fm3-exception{border:1px solid rgba(220,38,38,.3);background:rgba(220,38,38,.05);border-radius:9px;margin:8px 0;padding:10px}.fm3-exception-grid{display:grid;grid-template-columns:110px 100px 110px 1fr 150px 180px;gap:8px;align-items:center}.fm3-auto-table{width:100%;border-collapse:collapse}.fm3-auto-table th,.fm3-auto-table td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left;font-size:10px}.fm3-auto-table th{position:sticky;top:0;background:var(--card);z-index:1}.fm3-status{font-weight:700}.fm3-status.import{color:var(--good)}.fm3-status.skip{color:var(--muted)}.fm3-status.exclude{color:var(--warn)}.fm3-detail{max-height:310px;overflow:auto;border:1px solid var(--border);border-radius:8px}.fm3-section-title{font-weight:750;font-size:12px;margin:12px 0 7px}.fm3-small{font-size:9px;color:var(--muted)}
+@media(max-width:900px){.fm3-summary-grid{grid-template-columns:repeat(2,1fr)}.fm3-exception-grid{grid-template-columns:1fr 1fr}.fm3-exception-grid>*{min-width:0}}
+</style>
+<script id="fm-auto-ns-import-v22">
+/* Forklift Manager Financial Workflow v2.2 — automatic NetSuite month-end reconciliation */
+(function(){
+window.FM_AUTO_NS_IMPORT_VERSION='2026-10-06-v2.2';
+function fm3TrueNetSuite(t){
+  if(!t)return false;
+  if(String(t.sourceSystem||'').trim().toLowerCase()==='netsuite')return true;
+  const id=String(t.transactionId||'').trim().toUpperCase(),txt=[t.description,t.notes].join(' ');
+  return /^(NS-|NSR-)/.test(id)||/NetSuite accounting line|NetSuite rental import|NetSuite Memo\s*:|Account\s*:\s*602[23]\b/i.test(txt);
+}
+function fm3OperationalLegacyForDoc(g){
+  const doc=String(g.invoiceNumber||'').trim().toUpperCase();
+  return transactions.filter(t=>!fm3TrueNetSuite(t)&&String(t.invoiceNumber||'').trim().toUpperCase()===doc&&(!g.forkliftId||t.forkliftId===g.forkliftId));
+}
+function fm3NSRowsForDoc(g){
+  const doc=String(g.invoiceNumber||'').trim().toUpperCase();
+  let rows=transactions.filter(t=>fm3TrueNetSuite(t)&&String(t.invoiceNumber||'').trim().toUpperCase()===doc);
+  if(g.forkliftId){const x=rows.filter(t=>t.forkliftId===g.forkliftId);if(x.length)rows=x;}
+  return rows;
+}
+nsExistingForDoc=function(g){return fm3NSRowsForDoc(g);};
+nsReconcileExisting=function(g){
+  const rows=fm3NSRowsForDoc(g),total=Number(Number(g.total||0).toFixed(2));
+  if(!rows.length)return {kind:'none',rows:[],text:'No prior NetSuite posting'};
+  const sum=Number(rows.reduce((s,t)=>s+Number(t.amount||0),0).toFixed(2));
+  if(Math.abs(sum-total)<.011)return {kind:'exact-sum',rows,text:`Already imported from NetSuite (${fmtMoney(sum)})`};
+  return {kind:'netsuite-mismatch',rows,text:`Existing NetSuite amount ${fmtMoney(sum)} differs from incoming ${fmtMoney(total)}`};
+};
+function fm3OperationalMatch(g){
+  if(g.accountCode==='6023')return g.rentalMatch?.rental||null;
+  try{return fmFinBestServiceMatch(g)||null;}catch(e){return null;}
+}
+function fm3LegacyServiceCall(g){return fm3OperationalLegacyForDoc(g).some(t=>!!t.serviceCall);}
+function fm3ApplyCrossDocumentForklift(groups){
+  const byDoc={};for(const g of groups){const d=String(g.invoiceNumber||'').trim().toUpperCase();if(!d)continue;(byDoc[d]??=[]).push(g);}
+  for(const arr of Object.values(byDoc)){
+    const known=[...new Set(arr.map(g=>g.forkliftId).filter(Boolean))];
+    if(known.length===1)for(const g of arr)if(!g.forkliftId)g.forkliftId=known[0];
+  }
+}
+function fm3Recalc(g){
+  g.total=Number(g.lines.reduce((s,r)=>s+Number(r.amount||0),0).toFixed(2));
+  g.rentalEvidence=nsRentalEvidence(g);
+  if(!g.forkliftId)g.forkliftId=nsSuggestForkliftForGroup(g);
+  g.workroom=nsHistoricalWorkroom(g.forkliftId,g.transactionDate,g.workroom||nsResolveWorkroom(g.sourceWorkroom));
+  g.rentalMatch=nsFindRentalMatch(g);
+  g.operationalMatch=fm3OperationalMatch(g);
+  if(g.accountCode==='6023'){g.category='Rental';g.serviceCall=false;}
+  else{
+    const matchedPM=String(g.operationalMatch?.serviceType||'').toLowerCase()==='pm';
+    const amountPM=g.lines.some(r=>Math.abs(Number(r.amount||0)-135)<.001);
+    g.category=(matchedPM||amountPM)?'PM Service':'Repair / Expense';
+    if(g.category==='PM Service')g.serviceCall=false;
+    else if(g.serviceCall==null)g.serviceCall=fm3LegacyServiceCall(g)||g.lines.some(r=>r.amount>=300)&&!g.lines.some(r=>/credit/i.test(r.sourceType||''));
+  }
+  g.existing=nsReconcileExisting(g);
+  const counts={};transactions.filter(fm3TrueNetSuite).forEach(t=>{const k=nsLineExactKey(t);counts[k]=(counts[k]||0)+1;});
+  const seen={};g.lines.forEach(r=>{r.forkliftId=g.forkliftId;r.workroom=g.workroom;r.category=g.category;const k=nsLineExactKey(r);seen[k]=(seen[k]||0)+1;r.lineDuplicate=seen[k]<=(counts[k]||0);});
+  const saved=nsSavedExclusions()[nsDocKey(g)];
+  if(saved?.action?.startsWith('exclude'))g.action=saved.action;
+  else if(g.existing.kind==='exact-sum')g.action='skip';
+  else if(g.existing.kind==='netsuite-mismatch')g.action='exception';
+  else if(g.accountCode==='6023'&&g.rentalEvidence.kind==='nonforklift')g.action='exclude-notforklift';
+  else if(!g.forkliftId)g.action='exception';
+  else g.action='import';
+  g.exceptionReason=g.existing.kind==='netsuite-mismatch'?g.existing.text:(!g.forkliftId?'Forklift could not be identified confidently':'');
+  g.legacyRows=fm3OperationalLegacyForDoc(g);
+  return g;
+}
+nsRecalcGroup=fm3Recalc;
+
+handleNetSuiteFile=async function(file){
+  if(!file)return;
+  try{
+    const text=await file.text(),objs=csvObjects(text);if(!objs.length)throw new Error('CSV appears empty.');
+    const required=['Date','Document Number','Amount','Account'],missing=required.filter(k=>!(k in objs[0]));if(missing.length)throw new Error('Missing NetSuite columns: '+missing.join(', '));
+    const raw=objs.map((o,i)=>({sourceIndex:i+1,transactionDate:nsDateISO(o['Date']),invoiceNumber:String(o['Document Number']||'').trim(),amount:nsMoney(o['Amount']),vendor:String(o['Main Line Name']||o['Name']||'').trim(),memo:String(o['Memo']||'').trim(),sourceType:String(o['Type']||'').trim(),account:String(o['Account']||'').trim(),accountCode:nsAccountCode(o['Account']),sourceWorkroom:String(o['Workroom (no hierarchy)']||o['Workroom']||'').trim()}));
+    const map=new Map();for(const r of raw){const k=[r.accountCode,r.transactionDate,String(r.invoiceNumber).toUpperCase(),nsNorm(r.vendor),nsNorm(r.sourceWorkroom)].join('|');if(!map.has(k))map.set(k,{key:k,accountCode:r.accountCode,account:r.account,transactionDate:r.transactionDate,invoiceNumber:r.invoiceNumber,vendor:r.vendor,sourceWorkroom:r.sourceWorkroom,workroom:nsResolveWorkroom(r.sourceWorkroom),forkliftId:'',category:r.accountCode==='6023'?'Rental':'Repair / Expense',serviceCall:null,updatePrimary:false,vendorPhone:'',action:'',lines:[]});map.get(k).lines.push(r);}
+    nsImportGroups=[...map.values()];
+    nsImportGroups.forEach(fm3Recalc);fm3ApplyCrossDocumentForklift(nsImportGroups);nsImportGroups.forEach(fm3Recalc);
+    importRows=nsImportGroups.flatMap(g=>g.lines);
+    renderImportPreview();document.getElementById('import-modal').classList.add('open');
+  }catch(e){console.error(e);alert('Could not read NetSuite CSV: '+e.message);}
+};
+window.handleNetSuiteFile=handleNetSuiteFile;
+function fm3SetForklift(i,v){const g=nsImportGroups[i];g.forkliftId=v;g.action='';fm3Recalc(g);renderImportPreview();}
+function fm3SetExceptionAction(i,v){const g=nsImportGroups[i];if(v==='exclude-notforklift'||v==='exclude-accounting'||v==='exclude-other'){g.action=v;const all=nsSavedExclusions();all[nsDocKey(g)]={action:v,reason:nsExclusionReason(v),savedAt:new Date().toISOString()};nsSaveExclusions(all);}else{g.action=v==='import'?'import':'exception';}renderImportPreview();}
+window.fm3SetForklift=fm3SetForklift;window.fm3SetExceptionAction=fm3SetExceptionAction;
+
+renderImportPreview=function(){
+  const modal=document.querySelector('#import-modal .modal');if(!modal)return;
+  nsImportGroups.forEach(fm3Recalc);
+  const auto=nsImportGroups.filter(g=>g.action==='import'),skip=nsImportGroups.filter(g=>g.action==='skip'),exclude=nsImportGroups.filter(g=>String(g.action).startsWith('exclude')),exceptions=nsImportGroups.filter(g=>g.action==='exception');
+  const opMatched=auto.filter(g=>!!g.operationalMatch||g.legacyRows?.length).length;
+  const variances=auto.filter(g=>{const op=g.operationalMatch?.vendorInvoiceAmount??g.operationalMatch?.cost;return op!=null&&Math.abs(Number(op)-Number(g.total))>.01;}).length;
+  const title=modal.querySelector('.modal-title');if(title)title.textContent='September NetSuite Reconciliation';
+  const sub=modal.querySelector('.modal-head .muted');if(sub)sub.textContent='NetSuite is the accounting authority. Normal documents import automatically; only genuine exceptions require a decision.';
+  const body=modal.querySelector('.modal-body');
+  const exceptionHTML=exceptions.length?`<div class="fm3-section-title">Exceptions Requiring Review (${exceptions.length})</div>${exceptions.map((g,i0)=>{const i=nsImportGroups.indexOf(g);return `<div class="fm3-exception"><div class="fm3-exception-grid"><div><b>${esc(g.accountCode)}</b><div class="fm3-small">${fmtDate(g.transactionDate)}</div></div><div class="mono"><b>${esc(g.invoiceNumber||'—')}</b></div><div class="mono"><b>${fmtMoney(g.total)}</b></div><div><b>${esc(g.vendor||'—')}</b><div class="fm3-small">${esc(g.sourceWorkroom||'—')} · ${esc(g.exceptionReason||'Needs review')}</div></div><div>${nsForkliftOptions(g,i).replace(/nsSetForklift\(/g,'fm3SetForklift(')}</div><div><select class="import-select" onchange="fm3SetExceptionAction(${i},this.value)"><option value="exception" ${g.action==='exception'?'selected':''}>Needs Review</option><option value="import">Import</option><option value="exclude-notforklift">Exclude — Not Forklift</option><option value="exclude-accounting">Exclude — Accounting Miscoding</option><option value="exclude-other">Exclude — Other</option></select></div></div></div>`;}).join('')}`:'<div class="fm3-auto-note"><b>No manual exceptions.</b> The file is ready for automatic reconciliation.</div>';
+  const autoRows=[...auto,...skip,...exclude].sort((a,b)=>String(a.transactionDate).localeCompare(String(b.transactionDate))||String(a.invoiceNumber).localeCompare(String(b.invoiceNumber)));
+  const table=`<div class="fm3-section-title">Automatic Results (${autoRows.length})</div><details ${exceptions.length?'':'open'}><summary style="cursor:pointer;font-size:10px;margin-bottom:7px">${exceptions.length?'View':'Showing'} automatic imports, prior NetSuite duplicates, and clear exclusions</summary><div class="fm3-detail"><table class="fm3-auto-table"><thead><tr><th>Status</th><th>Acct</th><th>Date</th><th>Document</th><th>Forklift</th><th>Vendor</th><th>NetSuite Amount</th><th>Classification</th><th>Operational Match</th></tr></thead><tbody>${autoRows.map(g=>{const st=g.action==='import'?'Import Automatically':g.action==='skip'?'Already in NetSuite':`Excluded — ${nsExclusionReason(g.action)}`;const cls=g.action==='import'?'import':g.action==='skip'?'skip':'exclude';const om=g.operationalMatch?`Matched ${g.accountCode==='6023'?'rental':'operational record'}`:(g.legacyRows?.length?`${g.legacyRows.length} legacy operational row${g.legacyRows.length===1?'':'s'} found`:'—');return `<tr><td class="fm3-status ${cls}">${esc(st)}</td><td>${esc(g.accountCode)}</td><td>${fmtDate(g.transactionDate)}</td><td class="mono">${esc(g.invoiceNumber||'—')}</td><td class="mono">${esc(g.forkliftId||'—')}</td><td>${esc(g.vendor||'—')}</td><td class="mono"><b>${fmtMoney(g.total)}</b></td><td>${esc(g.category)}</td><td>${esc(om)}</td></tr>`;}).join('')}</tbody></table></div></details>`;
+  body.innerHTML=`<div class="fm3-summary-grid"><div class="fm3-card"><div class="k">NetSuite Documents</div><div class="v">${nsImportGroups.length}</div></div><div class="fm3-card"><div class="k">Automatic Imports</div><div class="v fm3-good">${auto.length}</div></div><div class="fm3-card"><div class="k">Operational Matches</div><div class="v">${opMatched}</div></div><div class="fm3-card"><div class="k">Already Imported</div><div class="v">${skip.length}</div></div><div class="fm3-card"><div class="k">Need Attention</div><div class="v ${exceptions.length?'fm3-warn':'fm3-good'}">${exceptions.length}</div></div></div><div class="fm3-auto-note"><b>Automatic rule:</b> valid NetSuite transactions import by default. Legacy operational rows never block NetSuite. Only a true prior NetSuite posting can be skipped as a duplicate. ${variances} matched operational item${variances===1?' has':'s have'} an amount variance; NetSuite will replace the operational amount as the accounting actual while preserving the variance for history.</div>${exceptionHTML}${table}`;
+  const btn=document.getElementById('import-save-btn');if(btn){btn.textContent=exceptions.length?'Resolve Exceptions to Continue':`Import ${auto.length} NetSuite Document${auto.length===1?'':'s'} Automatically`;btn.disabled=exceptions.length>0;}
+};
+window.renderImportPreview=renderImportPreview;
+
+async function fm3Import(){
+  nsImportGroups.forEach(fm3Recalc);
+  const exceptions=nsImportGroups.filter(g=>g.action==='exception');if(exceptions.length){alert(`${exceptions.length} genuine exception${exceptions.length===1?' still needs':'s still need'} review.`);return;}
+  const approved=nsImportGroups.filter(g=>g.action==='import'),skipped=nsImportGroups.filter(g=>g.action==='skip'),excluded=nsImportGroups.filter(g=>String(g.action).startsWith('exclude'));
+  if(!approved.length){alert('There are no new NetSuite documents to import.');return;}
+  const months=[...new Set(approved.map(g=>String(g.transactionDate||'').slice(0,7)).filter(Boolean))];
+  try{await fm2EnsurePreNetSuiteSnapshots();}catch(e){console.error(e);if(!confirm('Could not save the pre-NetSuite forecast snapshot. Continue anyway?'))return;}
+  if(!confirm(`Import ${approved.length} new NetSuite document${approved.length===1?'':'s'} automatically?\n\n${skipped.length} true NetSuite duplicate${skipped.length===1?' will':'s will'} be skipped. ${excluded.length} clear exclusion${excluded.length===1?' will':'s will'} remain excluded.`))return;
+  const btn=document.getElementById('import-save-btn');btn.disabled=true;btn.textContent='Reconciling…';
+  try{
+    const token=await getToken(),li=await fetch(TX_LIST_API+'?$select=ListItemEntityTypeFullName',{headers:{Accept:'application/json;odata=verbose',Authorization:'Bearer '+token}}).then(r=>r.json()),etype=li.d.ListItemEntityTypeFullName;
+    let created=0,rentalUpdated=0,failed=[];
+    for(const g of approved){
+      try{
+        fm3Recalc(g);
+        if(g.accountCode==='6023'){
+          const id=`NSR-${g.transactionDate.replaceAll('-','')}-${String(g.invoiceNumber||'NODOC').replace(/[^A-Za-z0-9]/g,'').slice(-18)}-${g.forkliftId.replace('#','F')}`;
+          await createTransactionLine(token,etype,{id,forkliftId:g.forkliftId,date:g.transactionDate,workroom:g.workroom,reference:g.invoiceNumber,amount:g.total,vendor:g.vendor,category:'Rental',serviceCall:false,hours:null,downtime:null,rentalRequired:true,description:`NetSuite 6023 rental invoice (${g.lines.length} accounting lines consolidated)`,notes:`NetSuite rental import | Expense Type: Rental | Account: 6023 | Source workroom: ${g.sourceWorkroom} | Lines: ${g.lines.length}`,serviceEventId:'',rentalId:g.rentalMatch?.rental?.rentalId||'',sourceSystem:'NetSuite',glAccount:'6023',netSuitePeriod:String(g.transactionDate).slice(0,7)});created++;
+          if(g.rentalMatch){await nsUpdateRentalFromImport(token,g.rentalMatch,g);rentalUpdated++;}
+        }else{
+          let serviceUsed=false,occ={};
+          for(const r of g.lines){if(r.lineDuplicate)continue;const k=nsLineExactKey({...r,forkliftId:g.forkliftId});if(occ[k]===undefined)occ[k]=transactions.filter(t=>fm3TrueNetSuite(t)&&nsLineExactKey(t)===k).length;occ[k]++;const id=importTxId({transactionDate:r.transactionDate,forkliftId:g.forkliftId,invoiceNumber:g.invoiceNumber,amount:r.amount},occ[k]);const serviceCall=g.category==='Repair / Expense'&&g.serviceCall&&!serviceUsed&&r.amount>0;if(serviceCall)serviceUsed=true;await createTransactionLine(token,etype,{id,forkliftId:g.forkliftId,date:g.transactionDate,workroom:g.workroom,reference:g.invoiceNumber,amount:r.amount,vendor:g.vendor,category:g.category,serviceCall,hours:null,downtime:null,rentalRequired:false,description:'NetSuite accounting line',notes:[r.memo?`NetSuite Memo: ${r.memo}`:'',`Account: ${g.accountCode}`].filter(Boolean).join(' | '),serviceEventId:'',rentalId:'',sourceSystem:'NetSuite',glAccount:g.accountCode,netSuitePeriod:String(g.transactionDate).slice(0,7)});created++;}
+        }
+        await fmFinReconcileGroup(token,g);
+      }catch(e){failed.push({invoice:g.invoiceNumber,error:e.message||String(e)});}
+    }
+    closeImportModal();tokenCache=null;await loadData(true);
+    try{await fm2FinalizeImportedPastMonths(months);}catch(e){console.error('Month finalization/carry-forward failed:',e);alert('NetSuite actuals imported, but carry-forward finalization needs review. The accounting data is preserved.');}
+    if(failed.length){console.table(failed);alert(`Reconciliation created ${created} NetSuite transaction record${created===1?'':'s'}. ${failed.length} document${failed.length===1?'':'s'} failed; see Console.`);}else alert(`Month-end reconciliation complete. ${created} NetSuite transaction record${created===1?'':'s'} created${rentalUpdated?` · ${rentalUpdated} rental record${rentalUpdated===1?'':'s'} reconciled`:''}.`);
+  }catch(e){console.error(e);alert('NetSuite reconciliation failed: '+e.message);}finally{btn.disabled=false;btn.textContent='Import NetSuite Automatically';}
+}
+importNetSuiteRows=fm3Import;window.importNetSuiteRows=fm3Import;
+
+// Update help language to match the automatic month-end process.
+try{
+ const tx=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Transactions — financial master data')?.parentElement?.querySelector('.help-body');
+ if(tx)tx.innerHTML=`<p><b>Forklift Transactions is the NetSuite-posted financial ledger.</b> During the month, operational invoices and estimates stay in Service Events / Rentals and feed the live Month Tracker.</p><p>At month-end, upload the final NetSuite CSV. Valid transactions import automatically. Legacy operational rows never block the import; they are reconciled to the NetSuite actual. The only normal manual review is a genuine exception such as an unidentified forklift, a true prior NetSuite posting with a conflicting amount, or a clear non-forklift charge.</p>`;
+}catch(e){}
+})();
+</script>
+
 </body>
 </html>
