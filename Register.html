@@ -5084,5 +5084,92 @@ try{
 })();
 </script>
 
+
+<script id="fm-financial-v23-variance-fix">
+/* Forklift Manager financial revamp v2.3 — operational-vs-NetSuite variance fix */
+window.FM_FINANCIAL_WORKFLOW_VERSION='2026-10-06-v2.3-variance-fix';
+
+function fm3OperationalAmount(g){
+  // Strongest structured operational amount first.
+  const m=g?.operationalMatch;
+  if(g?.accountCode==='6023'){
+    const rentalAmount=m?.cost ?? g?.rentalMatch?.rental?.cost;
+    if(rentalAmount!=null && Number.isFinite(Number(rentalAmount))) return Number(rentalAmount);
+  }else{
+    const serviceAmount=m?.vendorInvoiceAmount;
+    if(serviceAmount!=null && Number.isFinite(Number(serviceAmount))) return Number(serviceAmount);
+  }
+
+  // Fall back to legacy operational Transaction rows for this document/forklift.
+  // These rows are historical operational evidence only; they never block NetSuite.
+  const rows=(g?.legacyRows||[]).filter(t=>{
+    if(g?.accountCode==='6023') return isRentalTx(t);
+    return !isRentalTx(t);
+  });
+  if(rows.length){
+    const sum=Number(rows.reduce((a,t)=>a+Number(t.amount||0),0).toFixed(2));
+    if(Number.isFinite(sum)) return sum;
+  }
+  return null;
+}
+
+function fm3VarianceAmount(g){
+  const op=fm3OperationalAmount(g);
+  if(op==null || !Number.isFinite(Number(op))) return null;
+  return Number((Number(g.total||0)-Number(op)).toFixed(2));
+}
+
+// Reconcile using the same best operational amount used by preview/variance logic.
+const fm23BaseReconcileGroup=fmFinReconcileGroup;
+fmFinReconcileGroup=async function(token,g){
+  const postingMonth=String(g.transactionDate||'').slice(0,7),actual=Number(g.total||0),op=fm3OperationalAmount(g);
+  if(g.accountCode==='6023'){
+    const r=g.rentalMatch?.rental||rentals.find(x=>x.forkliftId===g.forkliftId&&String(x.invoice||'').trim().toUpperCase()===String(g.invoiceNumber||'').trim().toUpperCase());
+    if(r){
+      await fmFinPatchRental(token,r.spId,{
+        'Accounting Status':FM_POSTED,
+        'NetSuite Document Number':g.invoiceNumber,
+        'NetSuite Posted Amount':actual,
+        'NetSuite Posted Date':g.transactionDate,
+        'NetSuite Posting Month':postingMonth,
+        'Reconciliation Notes':`${op==null?'Operational amount unknown':`Operational amount ${fmtMoney(op)}`} reconciled to NetSuite ${fmtMoney(actual)}${op==null?'':` · variance ${fmtMoney(actual-op)}`}`
+      });
+      await fmFinRetireForecastHistory(token,{sourceType:'Rental',sourceId:r.rentalId,doc:g.invoiceNumber,actual,forkliftId:g.forkliftId,postingMonth});
+    }
+    return;
+  }
+  const e=fmFinBestServiceMatch(g);
+  if(!e)return;
+  const caseMatch=String(e.notes||'').match(/Repair Case ID:\s*([^|]+)/i),caseId=caseMatch?caseMatch[1].trim():'';
+  await fmFinPatchService(token,e.spId,{
+    'Accounting Status':FM_POSTED,
+    'NetSuite Document Number':g.invoiceNumber,
+    'NetSuite Posted Amount':actual,
+    'NetSuite Posted Date':g.transactionDate,
+    'NetSuite Posting Month':postingMonth,
+    'Reconciliation Notes':`${op==null?'Operational amount unknown':`Operational amount ${fmtMoney(op)}`} reconciled to NetSuite ${fmtMoney(actual)}${op==null?'':` · variance ${fmtMoney(actual-op)}`}`
+  });
+  await fmFinRetireForecastHistory(token,{sourceType:'Service Event',sourceId:e.eventId,caseId,doc:g.invoiceNumber,actual,forkliftId:g.forkliftId,postingMonth});
+};
+
+// Replace preview so variance uses the same operational evidence as reconciliation.
+renderImportPreview=function(){
+  const modal=document.querySelector('#import-modal .modal');if(!modal)return;
+  nsImportGroups.forEach(fm3Recalc);
+  const auto=nsImportGroups.filter(g=>g.action==='import'),skip=nsImportGroups.filter(g=>g.action==='skip'),exclude=nsImportGroups.filter(g=>String(g.action).startsWith('exclude')),exceptions=nsImportGroups.filter(g=>g.action==='exception');
+  const opMatched=auto.filter(g=>fm3OperationalAmount(g)!=null||g.legacyRows?.length).length;
+  const varianceGroups=auto.filter(g=>{const v=fm3VarianceAmount(g);return v!=null&&Math.abs(v)>.01;});
+  const variances=varianceGroups.length;
+  const title=modal.querySelector('.modal-title');if(title)title.textContent='September NetSuite Reconciliation';
+  const sub=modal.querySelector('.modal-head .muted');if(sub)sub.textContent='NetSuite is the accounting authority. Normal documents import automatically; only genuine exceptions require a decision.';
+  const body=modal.querySelector('.modal-body');
+  const exceptionHTML=exceptions.length?`<div class="fm3-section-title">Exceptions Requiring Review (${exceptions.length})</div>${exceptions.map(g=>{const i=nsImportGroups.indexOf(g);return `<div class="fm3-exception"><div class="fm3-exception-grid"><div><b>${esc(g.accountCode)}</b><div class="fm3-small">${fmtDate(g.transactionDate)}</div></div><div class="mono"><b>${esc(g.invoiceNumber||'—')}</b></div><div class="mono"><b>${fmtMoney(g.total)}</b></div><div><b>${esc(g.vendor||'—')}</b><div class="fm3-small">${esc(g.sourceWorkroom||'—')} · ${esc(g.exceptionReason||'Needs review')}</div></div><div>${nsForkliftOptions(g,i).replace(/nsSetForklift\(/g,'fm3SetForklift(')}</div><div><select class="import-select" onchange="fm3SetExceptionAction(${i},this.value)"><option value="exception" ${g.action==='exception'?'selected':''}>Needs Review</option><option value="import">Import</option><option value="exclude-notforklift">Exclude — Not Forklift</option><option value="exclude-accounting">Exclude — Accounting Miscoding</option><option value="exclude-other">Exclude — Other</option></select></div></div></div>`;}).join('')}`:'<div class="fm3-auto-note"><b>No manual exceptions.</b> The file is ready for automatic reconciliation.</div>';
+  const autoRows=[...auto,...skip,...exclude].sort((a,b)=>String(a.transactionDate).localeCompare(String(b.transactionDate))||String(a.invoiceNumber).localeCompare(String(b.invoiceNumber)));
+  const table=`<div class="fm3-section-title">Automatic Results (${autoRows.length})</div><details ${exceptions.length?'':'open'}><summary style="cursor:pointer;font-size:10px;margin-bottom:7px">${exceptions.length?'View':'Showing'} automatic imports, prior NetSuite duplicates, and clear exclusions</summary><div class="fm3-detail"><table class="fm3-auto-table"><thead><tr><th>Status</th><th>Acct</th><th>Date</th><th>Document</th><th>Forklift</th><th>Vendor</th><th>Operational Amount</th><th>NetSuite Amount</th><th>Variance</th><th>Classification</th><th>Operational Match</th></tr></thead><tbody>${autoRows.map(g=>{const st=g.action==='import'?'Import Automatically':g.action==='skip'?'Already in NetSuite':`Excluded — ${nsExclusionReason(g.action)}`;const cls=g.action==='import'?'import':g.action==='skip'?'skip':'exclude';const op=fm3OperationalAmount(g),v=fm3VarianceAmount(g);const om=g.operationalMatch?`Matched ${g.accountCode==='6023'?'rental':'operational record'}`:(g.legacyRows?.length?`${g.legacyRows.length} legacy operational row${g.legacyRows.length===1?'':'s'} found`:'—');return `<tr><td class="fm3-status ${cls}">${esc(st)}</td><td>${esc(g.accountCode)}</td><td>${fmtDate(g.transactionDate)}</td><td class="mono">${esc(g.invoiceNumber||'—')}</td><td class="mono">${esc(g.forkliftId||'—')}</td><td>${esc(g.vendor||'—')}</td><td class="mono">${op==null?'—':fmtMoney(op)}</td><td class="mono"><b>${fmtMoney(g.total)}</b></td><td class="mono">${v==null?'—':fmtMoney(v)}</td><td>${esc(g.category)}</td><td>${esc(om)}</td></tr>`;}).join('')}</tbody></table></div></details>`;
+  body.innerHTML=`<div class="fm3-summary-grid"><div class="fm3-card"><div class="k">NetSuite Documents</div><div class="v">${nsImportGroups.length}</div></div><div class="fm3-card"><div class="k">Automatic Imports</div><div class="v fm3-good">${auto.length}</div></div><div class="fm3-card"><div class="k">Operational Matches</div><div class="v">${opMatched}</div></div><div class="fm3-card"><div class="k">Already Imported</div><div class="v">${skip.length}</div></div><div class="fm3-card"><div class="k">Amount Variances</div><div class="v ${variances?'fm3-warn':'fm3-good'}">${variances}</div></div><div class="fm3-card"><div class="k">Need Attention</div><div class="v ${exceptions.length?'fm3-warn':'fm3-good'}">${exceptions.length}</div></div></div><div class="fm3-auto-note"><b>Automatic rule:</b> valid NetSuite transactions import by default. Legacy operational rows never block NetSuite. Only a true prior NetSuite posting can be skipped as a duplicate. <b>${variances}</b> matched operational item${variances===1?' has':'s have'} an amount variance. NetSuite becomes the accounting actual; the operational amount and variance are preserved for history.</div>${exceptionHTML}${table}`;
+  const btn=document.getElementById('import-save-btn');if(btn){btn.textContent=exceptions.length?'Resolve Exceptions to Continue':`Import ${auto.length} NetSuite Document${auto.length===1?'':'s'} Automatically`;btn.disabled=exceptions.length>0;}
+};
+window.renderImportPreview=renderImportPreview;
+</script>
 </body>
 </html>
