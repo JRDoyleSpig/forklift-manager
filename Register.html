@@ -5811,5 +5811,69 @@ try{ if(typeof renderBudget==='function') renderBudget(); }
 catch(e){ console.warn('v2.6.1 final PM filter refresh skipped:',e); }
 </script>
 
+
+<script id="fm-financial-revamp-v27-authoritative-pm-forecast">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.7
+   AUTHORITATIVE PM FORECAST PIPELINE
+
+   Structural fix:
+   fm2BestKnownForecasts previously pulled PM estimates from a function
+   captured BEFORE the v2.6 aging/dedup rules were installed. That allowed
+   stale and duplicate PM rows to re-enter Month Tracker / Budget even though
+   budgetPMForecasts itself had been corrected.
+
+   From this version forward:
+   - budgetPMForecasts() is the one authoritative PM forecast generator.
+   - fm2HistoricalEstimateDrivers uses that live generator for current/future.
+   - budgetAllForecasts is rebuilt from fm2BestKnownForecasts so every budget
+     consumer sees the same final precedence + aging + dedup logic.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.7-authoritative-pm-forecast';
+
+fm2HistoricalEstimateDrivers=function(ym){
+  if(!budgetIsPrior(ym)){
+    const repairs=(typeof fmFinBaseBudgetRepairForecasts==='function')?fmFinBaseBudgetRepairForecasts():[];
+    const pms=(typeof budgetPMForecasts==='function')?budgetPMForecasts():[];
+    const rentals=(typeof fmFinBaseBudgetRentalForecasts==='function')?fmFinBaseBudgetRentalForecasts():[];
+    return [...repairs,...pms,...rentals].filter(x=>String(x.ym||'')===String(ym||''));
+  }
+  return budgetHistoricalForecastDrivers(ym).filter(x=>
+    !/^Pending /i.test(String(x.forecastType||'')) &&
+    !/Invoice Received/i.test(String(x.type||''))
+  );
+};
+
+// Keep every forecast consumer on the same best-known-value pipeline.
+budgetAllForecasts=function(){
+  const base=todayISO().slice(0,7),all=[];
+  for(let i=0;i<12;i++){
+    const ym=budgetShiftYM(base,i);
+    all.push(...fm2BestKnownForecasts(ym).filter(x=>String(x.ym||'')===ym));
+  }
+  return all;
+};
+
+// Optional integrity guard: at most one unresolved PM estimate per forklift/month.
+const fm27BaseBestKnown=fm2BestKnownForecasts;
+fm2BestKnownForecasts=function(ym){
+  const rows=fm27BaseBestKnown(ym),chosen=new Map(),other=[];
+  for(const r of rows){
+    const isPm=typeof fm2DriverIsPM==='function'?fm2DriverIsPM(r):(/PM/i.test(String(r.type||r.forecastType||'')));
+    const isInvoice=/Invoice/i.test(String(r.type||''));
+    if(!isPm || isInvoice){other.push(r);continue;}
+    const k=`${r.forkliftId||''}|${r.ym||ym}`;
+    const due=(String(r.sourceId||'').match(/(\d{4}-\d{2}-\d{2})$/)||[])[1]||'';
+    const prev=chosen.get(k);
+    if(!prev || due>prev.due)chosen.set(k,{row:r,due});
+  }
+  return [...other,...[...chosen.values()].map(x=>x.row)];
+};
+
+try{
+  if(typeof renderBudget==='function')renderBudget();
+}catch(e){console.warn('v2.7 authoritative PM forecast refresh skipped:',e);}
+</script>
+
 </body>
 </html>
