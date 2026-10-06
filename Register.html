@@ -5606,5 +5606,143 @@ extractWorkOrder=function(text){
 };
 </script>
 
+
+
+<script id="fm-financial-revamp-v26-pm-forecast-dedup-aging">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.6
+   PM FORECAST AGING + DEDUPLICATION
+
+   Rules:
+   - PM Schedule controls expected PM timing.
+   - A missed PM may affect the NEXT month only once.
+   - Older missed occurrences remain operationally overdue on PM Schedule,
+     but do not keep inflating future budget months.
+   - Each forklift can contribute at most one PM forecast to a given month.
+   - A later real scheduled occurrence beats an older carry-forward occurrence.
+   - Real invoices/service records continue to replace PM forecasts through
+     the existing best-known-value / pending-invoice logic.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.6-pm-forecast-dedup-aging';
+
+function fm26YmIndex(ym){
+  const m=String(ym||'').match(/^(\d{4})-(\d{2})$/);
+  return m?Number(m[1])*12+(Number(m[2])-1):null;
+}
+function fm26AddMonthsISO(iso,months){
+  if(typeof pmAddMonths==='function') return pmAddMonths(iso,months);
+  const d=new Date(String(iso||'')+'T12:00:00');
+  if(Number.isNaN(d.getTime()))return '';
+  d.setMonth(d.getMonth()+Number(months||0));
+  return d.toISOString().slice(0,10);
+}
+function fm26MonthFromDatePlusDays(iso,days){
+  const d=new Date(String(iso||'')+'T12:00:00');
+  if(Number.isNaN(d.getTime()))return '';
+  d.setDate(d.getDate()+Number(days||0));
+  return budgetYM(d.getFullYear(),d.getMonth()+1);
+}
+
+budgetPMForecasts=function(){
+  const groups=budgetPMGroups();
+  const fleetCost=budgetMedian(groups.map(x=>x.cost))||173.88;
+  const currentYM=todayISO().slice(0,7);
+  const currentIdx=fm26YmIndex(currentYM);
+  const horizonYM=budgetShiftYM(currentYM,3);
+  const horizonIdx=fm26YmIndex(horizonYM);
+  const chosen=new Map(); // forklift + target month => strongest scheduled occurrence
+
+  for(const f of fleet){
+    if(['Parked','Retired','Scrapped','Sold'].includes(f.status))continue;
+
+    const own=groups.filter(x=>x.forkliftId===f.id).sort((a,b)=>a.date.localeCompare(b.date));
+    const cost=own.length?budgetMedian(own.map(x=>x.cost)):fleetCost;
+    const d=(typeof pmDerivedMap!=='undefined' && pmDerivedMap.get(f.id)) ||
+      (typeof pmDerive==='function'?pmDerive(f):null);
+
+    let dueISO=d?.nextPM||f.nextPM||'';
+    const freq=d?.recommendedFrequency||f.pmFrequency||'';
+    const months=typeof pmMonthsForFrequency==='function'?pmMonthsForFrequency(freq):null;
+    if(!dueISO||!months||currentIdx==null||horizonIdx==null)continue;
+
+    // Walk the cadence forward from the stored next-PM date. Older missed
+    // occurrences are skipped until we reach the one-month carry window.
+    for(let guard=0;guard<30;guard++){
+      const dueYM=String(dueISO).slice(0,7);
+      const dueIdx=fm26YmIndex(dueYM);
+      if(dueIdx==null)break;
+      if(dueIdx>horizonIdx+1)break;
+
+      let targetYM='';
+      let carry=false;
+
+      if(dueIdx<currentIdx-1){
+        // More than one month overdue: do not budget this missed occurrence.
+        dueISO=fm26AddMonthsISO(dueISO,months);
+        if(!dueISO)break;
+        continue;
+      }else if(dueIdx===currentIdx-1){
+        // One and only one carry month.
+        targetYM=currentYM;
+        carry=true;
+      }else{
+        // Current/future PM: use expected invoice timing (about one week later).
+        targetYM=fm26MonthFromDatePlusDays(dueISO,7) || dueYM;
+      }
+
+      const targetIdx=fm26YmIndex(targetYM);
+      if(targetIdx!=null && targetIdx<=horizonIdx){
+        const sourceId=`PM:${f.id}:${dueISO}`;
+        const ov=budgetManualOverride('PM',sourceId);
+        const effectiveYM=ov?budgetYM(ov.year,ov.monthNumber):targetYM;
+        const effectiveIdx=fm26YmIndex(effectiveYM);
+        if(effectiveIdx!=null && effectiveIdx>=currentIdx && effectiveIdx<=horizonIdx){
+          const row={
+            key:`pm:${sourceId}`,
+            account:BUDGET_ACCOUNT_6022,
+            type:'Expected PM',
+            forecastType:'PM Forecast',
+            forkliftId:f.id,
+            workroom:f.workroom,
+            vendor:own.at(-1)?.vendor||f.serviceVendor||'',
+            amount:ov?ov.amount:Math.round(cost*100)/100,
+            ym:effectiveYM,
+            confidence:own.length>=2?'High':own.length?'Medium':'Low',
+            issue:'',
+            status:carry?'One-Month Carry':'Expected',
+            sourceType:'PM',
+            sourceId,
+            basis:`PM Schedule due ${fmtDate(dueISO)} · ${carry?'one-month carry · ':''}${freq||'frequency not set'} · ${own.length?'own PM median':'fleet PM median'} ${fmtMoney(cost)}`,
+            description:`PM forecast for ${f.id}`,
+            canOverride:true,
+            _fm26Carry:carry,
+            _fm26DueIdx:dueIdx
+          };
+
+          const k=`${f.id}|${effectiveYM}`;
+          const prev=chosen.get(k);
+          // Prefer a real occurrence in that month over a carried occurrence.
+          // Otherwise prefer the later due date (closest/current schedule).
+          if(!prev || (prev._fm26Carry && !row._fm26Carry) ||
+             (prev._fm26Carry===row._fm26Carry && row._fm26DueIdx>prev._fm26DueIdx)){
+            chosen.set(k,row);
+          }
+        }
+      }
+
+      dueISO=fm26AddMonthsISO(dueISO,months);
+      if(!dueISO)break;
+    }
+  }
+
+  return [...chosen.values()].map(({_fm26Carry,_fm26DueIdx,...x})=>x);
+};
+
+// budgetAllForecasts in the financial revamp already calls budgetPMForecasts
+// dynamically. Force a redraw after install if the app is already loaded.
+try{
+  if(typeof renderBudget==='function')renderBudget();
+}catch(e){console.warn('v2.6 PM forecast refresh skipped:',e);}
+</script>
 </body>
 </html>
