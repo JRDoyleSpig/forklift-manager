@@ -6451,5 +6451,110 @@ function fm211ExportMonthlySummary(){
 })();
 </script>
 
+
+<script id="fm-financial-revamp-v212-completed-repair-invoice-link">
+/* =====================================================================
+   FORKLIFT MANAGER — FINANCIAL REVAMP v2.12
+   COMPLETED REPAIR -> DIRECT INVOICE LINK / UPLOAD
+
+   Fixes the real-world Texarkana workflow discovered 10/12/2026:
+   - A completed repair awaiting financial reconciliation can be clicked.
+   - User may upload the invoice from that repair row, guaranteeing the new
+     service document carries the Repair Case ID.
+   - If an invoice was already uploaded separately, the row offers a one-click
+     link to a unique matching pending invoice on the same forklift.
+   - Once linked, the invoice replaces the app-generated repair estimate in
+     live budget exposure; NetSuite later replaces the invoice as authority.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.12-completed-repair-invoice-link';
+let fm212ActiveRepairCaseId='';
+
+function fm212CompletedCase(caseId){
+  return repairCaseBundles().find(c=>String(c.base.eventId||'')===String(caseId||''))||null;
+}
+function fm212UnlinkedInvoiceCandidates(c){
+  if(!c)return [];
+  return serviceEvents.filter(e=>{
+    if(e.forkliftId!==c.base.forkliftId)return false;
+    if(!(Number(e.vendorInvoiceAmount)>0))return false;
+    if(!fmFinUnresolvedStatus(e.accountingStatus||FM_INVOICE))return false;
+    if(repairCaseIdFromEvent(e))return false;
+    if(/\bpm\b/i.test(String(e.serviceType||'')+' '+String(e.description||'')))return false;
+    if(/rental/i.test(String(e.serviceType||'')+' '+String(e.description||'')))return false;
+    if(!fm29DateInCaseWindow(String(e.serviceDate||''),c))return false;
+    const vs=fm29CaseVendors(c);
+    return !vs.length||!e.vendor||vs.some(v=>fm29VendorCompatible(v,e.vendor));
+  }).sort((a,b)=>String(b.serviceDate||'').localeCompare(String(a.serviceDate||''))||Number(b.spId||0)-Number(a.spId||0));
+}
+
+window.fm212OpenCompletedRepairInvoice=function(caseId){
+  const c=fm212CompletedCase(caseId);if(!c)return alert('Repair case could not be found. Refresh and try again.');
+  fm212ActiveRepairCaseId=String(caseId||'');
+  openWorkOrderModal(c.base.forkliftId);
+  const fsel=document.getElementById('wo-forklift');if(fsel)fsel.disabled=true;
+  const pm=document.getElementById('wo-is-pm');if(pm){pm.checked=false;pm.disabled=true;}
+  setFormVal('wo-vendor',c.latest.vendor||c.base.vendor||'');
+  setFormVal('wo-workroom',c.base.workroom||'');
+  setFormVal('wo-transaction-type','Repair / Expense');
+  const note=`Repair Case ID: ${caseId}`;
+  setFormVal('wo-notes',note);
+  const title=document.querySelector('#workorder-modal .modal-title');if(title)title.textContent=`Upload Invoice for ${c.base.forkliftId} — ${c.base.workroom||''}`;
+  const preview=document.getElementById('wo-preview');if(preview)preview.innerHTML=`<b>Linked repair:</b> ${esc(caseId)}<br><span class="muted">This upload will be attached financially to the completed repair and will replace its estimate in the live budget. NetSuite will remain the final accounting authority.</span>`;
+};
+
+const fm212BaseCloseWorkOrder=closeWorkOrderModal;
+closeWorkOrderModal=function(){
+  const fsel=document.getElementById('wo-forklift');if(fsel)fsel.disabled=false;
+  const pm=document.getElementById('wo-is-pm');if(pm)pm.disabled=false;
+  fm212ActiveRepairCaseId='';
+  const title=document.querySelector('#workorder-modal .modal-title');if(title)title.textContent='Upload PM / Work Order / Invoice';
+  return fm212BaseCloseWorkOrder();
+};
+
+const fm212BaseSaveWorkOrder=saveWorkOrderHours;
+saveWorkOrderHours=async function(){
+  if(fm212ActiveRepairCaseId){
+    const current=String(formVal('wo-notes')||'').trim();
+    const marker=`Repair Case ID: ${fm212ActiveRepairCaseId}`;
+    if(!new RegExp(`Repair Case ID:\\s*${String(fm212ActiveRepairCaseId).replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')}`,'i').test(current)){
+      setFormVal('wo-notes',[current,marker].filter(Boolean).join(' | '));
+    }
+    const tx=document.getElementById('wo-transaction-type');if(tx)tx.value='Repair / Expense';
+    const pm=document.getElementById('wo-is-pm');if(pm)pm.checked=false;
+  }
+  return await fm212BaseSaveWorkOrder();
+};
+
+window.fm212LinkExistingInvoice=async function(caseId,spId){
+  const c=fm212CompletedCase(caseId),e=serviceEvents.find(x=>Number(x.spId)===Number(spId));
+  if(!c||!e)return alert('The repair case or invoice record could not be found. Refresh and try again.');
+  if(!confirm(`Link invoice ${e.reference||e.eventId} (${fmtMoney(e.vendorInvoiceAmount)}) to ${c.base.forkliftId} repair case ${caseId}?\n\nThis will replace the completed-repair estimate with the invoice amount in the live budget. NetSuite will still be the final actual.`))return;
+  try{
+    const token=await getToken();
+    const oldNotes=String(e.notes||'').trim(),marker=`Repair Case ID: ${caseId}`;
+    const notes=new RegExp('Repair Case ID:','i').test(oldNotes)?oldNotes:[oldNotes,marker].filter(Boolean).join(' | ');
+    const recon=[String(e.reconciliationNotes||'').trim(),`Linked to completed repair ${caseId}`].filter(Boolean).join(' | ');
+    await fmFinPatchService(token,e.spId,{'Notes':notes,'Accounting Status':FM_INVOICE,'Reconciliation Notes':recon});
+    tokenCache=null;await loadData(true);
+    alert(`Invoice ${e.reference||e.eventId} is now linked to ${caseId}. The completed-repair estimate has been replaced by ${fmtMoney(e.vendorInvoiceAmount)} pending NetSuite.`);
+  }catch(err){console.error(err);alert('Could not link the existing invoice: '+err.message);}
+};
+
+const fm212BaseRenderServiceView=renderServiceView;
+renderServiceView=function(){
+  const r=fm212BaseRenderServiceView();
+  const panel=document.getElementById('fm29-completed-financial-panel');if(!panel)return r;
+  const rows=fm29CompletedUnresolved();
+  panel.innerHTML=`<div class="panel-head"><div class="panel-title">Completed Repairs Awaiting Financial Reconciliation</div><span class="muted" style="font-size:10px">Click Upload Invoice here so the invoice is guaranteed to stay linked to the repair case</span></div><div class="service-table-wrap"><table><thead><tr><th>Forklift</th><th>Workroom</th><th>Completed</th><th>Vendor</th><th>Expected / Remaining</th><th>Matched NetSuite</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.map(({c,st})=>{const cand=fm212UnlinkedInvoiceCandidates(c);const one=cand.length===1?cand[0]:null;return `<tr><td class="mono">${esc(c.base.forkliftId||'—')}</td><td>${esc(c.base.workroom||'—')}</td><td>${fmtDate(c.latest.serviceDate||c.base.serviceDate)}</td><td>${esc(c.latest.vendor||c.base.vendor||'—')}</td><td class="mono">${fmtMoney(st.remaining||st.pendingTotal)}</td><td class="mono">${st.actualTotal?fmtMoney(st.actualTotal):'—'}</td><td>${st.pending.length?'Invoice Received — Awaiting NetSuite':'Completed — Unreconciled'}</td><td style="white-space:nowrap"><button class="copy-btn" onclick="fm212OpenCompletedRepairInvoice('${esc(c.base.eventId)}')">Upload Invoice</button>${one?` <button class="copy-btn" onclick="fm212LinkExistingInvoice('${esc(c.base.eventId)}',${one.spId})">Use Existing ${fmtMoney(one.vendorInvoiceAmount)}</button>`:''}${cand.length>1?` <span class="pending-chip" title="More than one unlinked invoice could match; use Upload Invoice or review the records manually.">${cand.length} possible invoices</span>`:''}</td></tr>`;}).join('')+(rows.length?'':'<tr><td colspan="8" class="empty">No completed repairs are waiting for financial reconciliation.</td></tr>')}</tbody></table></div>`;
+  return r;
+};
+
+(function fm212Help(){
+  const repair=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Repair Cases — the full workflow')?.parentElement?.querySelector('.help-body');
+  if(repair&&!document.getElementById('fm212-help'))repair.insertAdjacentHTML('beforeend','<p id="fm212-help"><b>Completed repair invoice workflow:</b> when a completed repair is waiting for financial reconciliation, use <b>Upload Invoice</b> directly from that row. The invoice is stored with the Repair Case ID so it immediately replaces the repair estimate in the live budget. If an invoice was already uploaded separately and there is exactly one safe match, <b>Use Existing</b> links it without re-uploading the document.</p>');
+  try{if(typeof renderServiceView==='function')renderServiceView();}catch(e){console.warn('v2.12 initial service refresh skipped:',e);}
+})();
+</script>
+
 </body>
 </html>
