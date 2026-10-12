@@ -6556,5 +6556,50 @@ renderServiceView=function(){
 })();
 </script>
 
+
+<script id="fm-v213-preserve-operational-repair-status">
+/* =====================================================================
+   FORKLIFT MANAGER — v2.13
+   PRESERVE OPERATIONAL REPAIR STATUS WHEN FINANCIAL DOCUMENTS ARE LINKED
+
+   A linked invoice/work-order is financial evidence. It must never become
+   the source of truth for the repair case's operational status. Only the
+   Repair Case record itself or an explicit Repair Update carrying
+   "Case Status:" may advance/reopen/close the operational case.
+   ===================================================================== */
+window.FM_FINANCIAL_REVAMP_VERSION='2.13-preserve-repair-status';
+
+repairCaseBundles=function(){
+  const bases=serviceEvents.filter(e=>String(e.serviceType||'').toLowerCase()==='repair case');
+  return bases.map(base=>{
+    const updates=serviceEvents
+      .filter(e=>repairCaseIdFromEvent(e)===base.eventId&&e.spId!==base.spId)
+      .sort((a,b)=>String(a.serviceDate||'').localeCompare(String(b.serviceDate||''))||Number(a.spId||0)-Number(b.spId||0));
+
+    // Operational state may only come from an event that explicitly carries
+    // Case Status. Financial/service documents linked later are still kept in
+    // updates for financial matching, but cannot reopen a completed case.
+    const statusUpdates=updates.filter(e=>/\bCase Status\s*:/i.test(String(e.notes||'')));
+    const latestOperational=statusUpdates.length?statusUpdates[statusUpdates.length-1]:base;
+    const status=repairCaseStatusFromEvent(latestOperational)||repairCaseStatusFromEvent(base)||'New Request';
+
+    return {
+      base,
+      updates,
+      latest:latestOperational,
+      latestOperational,
+      status
+    };
+  });
+};
+
+// Refresh immediately so a previously completed case that was visually
+// reopened by a later invoice returns to its correct operational section.
+try{
+  if(typeof renderServiceView==='function')renderServiceView();
+  if(typeof renderBudget==='function')renderBudget();
+}catch(e){console.warn('v2.13 initial refresh skipped:',e);}
+</script>
+
 </body>
 </html>
