@@ -6635,5 +6635,144 @@ try{
 })();
 </script>
 
+
+<script id="fm-v216-durable-repair-operational-status">
+/* =====================================================================
+   FORKLIFT MANAGER — v2.16
+   DURABLE REPAIR OPERATIONAL STATUS + SAFE INVOICE DOCUMENT UPSERT
+
+   Root-cause fix:
+   - A Work Order / Invoice document must NEVER merge over a Repair Case or
+     Repair Update record. Those records contain the operational status trail.
+   - The current operational status is also persisted on the base Repair Case
+     as "Current Operational Status:" so financial documents cannot erase it.
+   - Direct invoice links from the Completed Repairs Awaiting Invoice row are
+     treated as proof that the case was operationally closed at link time.
+     This repairs cases where the old close-update record was previously
+     overwritten by the document upsert bug.
+   ===================================================================== */
+(function(){
+  window.FM_FINANCIAL_REVAMP_VERSION='2.16-durable-repair-status';
+
+  function fm216CurrentMarker(notes){
+    const m=[...String(notes||'').matchAll(/Current Operational Status:\s*([^|\n]+)/ig)];
+    return m.length?String(m[m.length-1][1]||'').trim():'';
+  }
+  function fm216SetMarker(notes,status){
+    const raw=String(notes||'').replace(/(?:\s*\|\s*)?Current Operational Status:\s*[^|\n]*/ig,'').trim().replace(/^\|\s*|\s*\|$/g,'').trim();
+    return [raw,`Current Operational Status: ${status}`].filter(Boolean).join(' | ');
+  }
+  async function fm216PersistCaseStatus(c,status){
+    if(!c?.base?.spId||!status)return;
+    const token=await getToken();
+    const notes=fm216SetMarker(c.base.notes,status);
+    await fmFinPatchService(token,c.base.spId,{'Status':status,'Notes':notes});
+  }
+  window.fm216PersistCaseStatus=fm216PersistCaseStatus;
+
+  // Never allow generic document matching to overwrite Repair Case / Repair Update.
+  // Only document-like events may be reused/merged.
+  upsertServiceEventForDocument=async function(token,data,files=[]){
+    const isPM=String(data.type||'').toLowerCase()==='pm';
+    const matches=matchingServiceEventsForDocument(data.forkliftId,data.date,data.reference,isPM)
+      .filter(e=>!['repair case','repair update'].includes(String(e.serviceType||'').toLowerCase()));
+    return matches.length?mergeServiceEventRecord(token,matches[0],data,files):createServiceEventRecord(token,data,files);
+  };
+  window.upsertServiceEventForDocument=upsertServiceEventForDocument;
+
+  // Durable bundle logic. Priority:
+  // 1) explicit durable marker on base case
+  // 2) latest explicit Repair Update Case Status
+  // 3) direct linked invoice that could only have come from the completed row
+  // 4) base case status
+  repairCaseBundles=function(){
+    const bases=serviceEvents.filter(e=>String(e.serviceType||'').toLowerCase()==='repair case');
+    return bases.map(base=>{
+      const updates=serviceEvents
+        .filter(e=>repairCaseIdFromEvent(e)===base.eventId&&e.spId!==base.spId)
+        .sort((a,b)=>String(a.serviceDate||'').localeCompare(String(b.serviceDate||''))||Number(a.spId||0)-Number(b.spId||0));
+      const statusUpdates=updates.filter(e=>/\bCase Status\s*:/i.test(String(e.notes||'')));
+      const latestExplicit=statusUpdates.length?statusUpdates[statusUpdates.length-1]:null;
+      const marker=fm216CurrentMarker(base.notes);
+
+      const linkedInvoices=updates.filter(e=>{
+        if(!/Repair Case ID\s*:/i.test(String(e.notes||'')))return false;
+        if(/\bpm\b/i.test(String(e.serviceType||'')+' '+String(e.description||'')))return false;
+        return Number(e.vendorInvoiceAmount||0)>0 || /invoice/i.test(String(e.accountingStatus||''));
+      });
+      const latestLinked=linkedInvoices.length?linkedInvoices[linkedInvoices.length-1]:null;
+
+      let latestOperational=latestExplicit||base;
+      let status=marker || (latestExplicit?repairCaseStatusFromEvent(latestExplicit):'') || repairCaseStatusFromEvent(base) || 'New Request';
+
+      // A Repair Case ID is automatically placed on an invoice only when it is
+      // launched/linked from the completed-repair row. If an older close update
+      // was lost by the former upsert bug, restore the closed state unless a
+      // later explicit Case Status update intentionally changed it afterward.
+      if(!marker && latestLinked){
+        const explicitAfter=latestExplicit && (
+          String(latestExplicit.serviceDate||'')>String(latestLinked.serviceDate||'') ||
+          (String(latestExplicit.serviceDate||'')===String(latestLinked.serviceDate||'') && Number(latestExplicit.spId||0)>Number(latestLinked.spId||0))
+        );
+        if(!explicitAfter && !['repaired / closed','repaired / resolved'].includes(String(status||'').toLowerCase())){
+          status='Repaired / Resolved';
+          latestOperational=latestLinked;
+        }
+      }
+      return {base,updates,latest:latestOperational,latestOperational,status};
+    });
+  };
+  window.repairCaseBundles=repairCaseBundles;
+
+  // Persist the selected status on the base case after every successful explicit update.
+  const fm216BaseSaveRepairUpdate=saveRepairUpdate;
+  saveRepairUpdate=async function(){
+    const before=repairCaseById(activeRepairCaseId);
+    const wanted=String(formVal('ru-status')||'').trim();
+    const caseId=before?.base?.eventId||'';
+    const updateDate=String(formVal('ru-date')||'');
+    await fm216BaseSaveRepairUpdate();
+    if(!caseId||!wanted)return;
+    try{
+      const refreshed=repairCaseBundles().find(c=>c.base.eventId===caseId);
+      const verified=(refreshed?.updates||[]).some(e=>
+        String(e.serviceDate||'')===updateDate &&
+        new RegExp(`Case Status:\\s*${wanted.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')}`,'i').test(String(e.notes||''))
+      );
+      if(verified){
+        await fm216PersistCaseStatus(refreshed,wanted);
+        tokenCache=null;await loadData(true);
+      }
+    }catch(err){console.warn('v2.16 durable status sync skipped:',err);}
+  };
+  window.saveRepairUpdate=saveRepairUpdate;
+
+  // When invoice upload is launched from the completed row, persist the closed
+  // state BEFORE the document is saved. This prevents a financial event from
+  // ever becoming the only surviving record of that workflow.
+  const fm216BaseSaveWorkOrder=saveWorkOrderHours;
+  saveWorkOrderHours=async function(){
+    if(typeof fm212ActiveRepairCaseId!=='undefined' && fm212ActiveRepairCaseId){
+      try{
+        const c=repairCaseBundles().find(x=>x.base.eventId===fm212ActiveRepairCaseId);
+        if(c && ['repaired / closed','repaired / resolved'].includes(String(c.status||'').toLowerCase())){
+          await fm216PersistCaseStatus(c,c.status);
+          tokenCache=null;await loadData(true);
+        }
+      }catch(err){console.warn('v2.16 pre-invoice status preservation skipped:',err);}
+    }
+    return await fm216BaseSaveWorkOrder();
+  };
+  window.saveWorkOrderHours=saveWorkOrderHours;
+
+  // Repair existing affected cases in memory immediately; the next explicit
+  // update or completed-row invoice action will persist the durable marker.
+  try{
+    if(typeof renderServiceView==='function')renderServiceView();
+    if(typeof renderBudget==='function')renderBudget();
+  }catch(e){console.warn('v2.16 initial refresh skipped:',e);}
+})();
+</script>
+
 </body>
 </html>
