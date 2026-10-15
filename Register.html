@@ -6774,5 +6774,174 @@ try{
 })();
 </script>
 
+
+
+<script id="fm-v217-repair-save-guards">
+/* =====================================================================
+   FORKLIFT MANAGER — v2.17
+   REPAIR SAVE GUARDS + VOID / ENTERED IN ERROR
+
+   Fixes:
+   1) A Repair Case is saved first. If the optional Fleet Status / lifecycle
+      step fails afterward, the app clearly says the CASE WAS CREATED and
+      must not be re-entered.
+   2) Exact same-day / same-problem duplicate Repair Cases are blocked.
+   3) Repair Cases can be Void / Entered in Error without deleting history.
+   ===================================================================== */
+(function(){
+  window.FM_FINANCIAL_REVAMP_VERSION='2.17-repair-save-guards';
+
+  function fm217NormText(v){
+    return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();
+  }
+  function fm217ExactDuplicate(fid,date,desc){
+    const nd=fm217NormText(desc);
+    return repairCaseBundles().find(c=>
+      c.base.forkliftId===fid &&
+      String(c.base.serviceDate||'')===String(date||'') &&
+      fm217NormText(c.base.description)===nd &&
+      !/\[\[REPAIR_VOID:/i.test(String(c.base.notes||''))
+    );
+  }
+  function fm217CaseIsVoided(c){
+    return /\[\[REPAIR_VOID:/i.test(String(c?.base?.notes||'')) ||
+      (c?.updates||[]).some(e=>/\[\[REPAIR_VOID:/i.test(String(e.notes||'')));
+  }
+  window.fm217CaseIsVoided=fm217CaseIsVoided;
+
+  // Voided cases are audit history only; they are never operational or financial exposure.
+  const fm217BaseBundles=repairCaseBundles;
+  repairCaseBundles=function(){
+    return fm217BaseBundles().filter(c=>!fm217CaseIsVoided(c));
+  };
+  window.repairCaseBundles=repairCaseBundles;
+
+  // Rebuild Open Repair Case save with explicit partial-success handling.
+  saveRepairCase=async function(){
+    const f=fleet.find(x=>x.id===formVal('rc-forklift')),
+      date=formVal('rc-date'),status=formVal('rc-status'),vendor=formVal('rc-vendor').trim(),
+      phone=formVal('rc-vendor-phone').trim(),serviceStatus=formVal('rc-service-status'),
+      scheduled=formVal('rc-service-date'),availability=formVal('rc-availability'),
+      fleetStatus=formVal('rc-fleet-status'),requested=formVal('rc-requested-by').trim(),
+      desc=formVal('rc-description').trim();
+
+    if(!f||!date||!desc||!availability){
+      alert('Forklift, Date Reported, Forklift Availability, and Problem / Request are required.');return;
+    }
+    if(serviceStatus==='Scheduled — Date Confirmed'&&!scheduled){
+      alert('Enter the Initial Service Date, or change Initial Service Status to Requested / Awaiting Date.');return;
+    }
+
+    const exact=fm217ExactDuplicate(f.id,date,desc);
+    if(exact){
+      alert(`${f.id} already has this same repair request dated ${fmtDate(date)}.\n\nExisting case: ${exact.base.eventId}\n\nThe duplicate was NOT created. Open the existing Repair Case instead.`);
+      return;
+    }
+
+    const existing=repairCaseBundles().find(c=>repairCaseIsOpen(c)&&c.base.forkliftId===f.id);
+    if(existing&&!confirm(`${f.id} already has a different open repair case (${existing.status}).\n\nOpen another separate repair case anyway?`))return;
+    if(!confirm(`Open a repair case for ${f.id} · ${f.workroom}?`))return;
+
+    const btn=document.getElementById('rc-save');btn.disabled=true;btn.textContent='Opening…';
+    let createdItem=null,caseId='',caseCreated=false;
+    try{
+      const token=await getToken();
+      caseId=`RC-${f.id.replace('#','')}-${date.replaceAll('-','')}-${Date.now()}`;
+      const notes=[`Case Status: ${status}`,`Current Operational Status: ${status}`,
+        `Initial Service Status: ${serviceStatus}`,scheduled?`Initial Service Date: ${scheduled}`:'',
+        `Forklift Availability: ${availability}`,fleetStatus?`Fleet Status Requested: ${fleetStatus}`:'',
+        requested?`Requested By: ${requested}`:'',formVal('rc-notes').trim()].filter(Boolean).join(' | '),
+        files=[...document.getElementById('rc-files').files];
+
+      createdItem=await createServiceEventRecord(token,{eventId:caseId,forkliftId:f.id,date,type:'Repair Case',vendor,vendorPhone:phone,workroom:f.workroom,reference:'',hours:null,downtime:null,rentalRequired:false,description:desc,notes,status},files);
+      if(!createdItem?.Id)throw new Error('Repair case could not be verified in SharePoint.');
+      caseCreated=true;
+
+      let fleetWarning='';
+      if(fleetStatus){
+        try{
+          await updateFleetStatusFromRepair(token,f,fleetStatus);
+        }catch(err){
+          console.error('Repair case created; Fleet status/lifecycle step failed:',err);
+          fleetWarning=err?.message||String(err);
+        }
+      }
+      try{await updatePrimaryVendorIfRequested(token,f,vendor,phone);}catch(err){console.warn('Primary vendor update skipped:',err);}
+
+      tokenCache=null;await loadData(true);
+      const verified=serviceEvents.find(e=>e.spId===createdItem.Id||e.eventId===caseId);
+      if(!verified)throw new Error(`Repair case ${caseId} was created in SharePoint (item ${createdItem.Id}) but the app could not reload it. Do not re-enter it; refresh the app and check Forklift Service Events.`);
+      if(String(verified.serviceType||'').toLowerCase()!=='repair case')throw new Error(`Repair case ${caseId} was created in SharePoint, but Service Type did not reload as "Repair Case". Do not re-enter it; the Service Type field mapping needs correction.`);
+
+      closeRepairCaseModal();
+      if(fleetWarning){
+        alert(`Repair Case ${caseId} WAS CREATED successfully.\n\nHowever, the requested Fleet Status change to "${fleetStatus}" could not be completed:\n${fleetWarning}\n\nDO NOT create the repair request again. The case is already saved. You can change the forklift Fleet Status separately after reviewing the lifecycle issue.`);
+      }else{
+        alert('Repair case opened successfully and verified in SharePoint.');
+      }
+    }catch(e){
+      console.error(e);
+      if(caseCreated){
+        alert(`Repair Case ${caseId} WAS CREATED, but a later verification/update step failed:\n${e.message}\n\nDO NOT re-enter the repair request. Refresh the app and open the existing case.`);
+        try{closeRepairCaseModal();tokenCache=null;await loadData(true);}catch(_e){}
+      }else{
+        alert('Could not open repair case: '+e.message);
+      }
+    }finally{btn.disabled=false;btn.textContent='Open Repair Case';}
+  };
+  window.saveRepairCase=saveRepairCase;
+
+  function fm217InstallVoidButton(){
+    const modal=document.getElementById('repair-update-modal');
+    const foot=modal?.querySelector('.modal-foot');
+    if(!foot||document.getElementById('ru-void-case'))return;
+    const btn=document.createElement('button');
+    btn.type='button';btn.className='btn';btn.id='ru-void-case';btn.textContent='Void / Entered in Error';
+    btn.style.marginRight='auto';btn.onclick=fm217VoidRepairCase;
+    foot.insertBefore(btn,foot.firstChild);
+  }
+
+  async function fm217VoidRepairCase(){
+    const c=repairCaseById(activeRepairCaseId);
+    if(!c)return alert('Repair case not found. Refresh and try again.');
+    const reason=prompt('Reason this Repair Case was entered in error / should be voided:','Duplicate repair request');
+    if(reason===null)return;
+    if(!String(reason).trim())return alert('A reason is required to void a Repair Case.');
+    if(!confirm(`Void Repair Case ${c.base.eventId} for ${c.base.forkliftId}?\n\nThis does NOT delete history. It removes this case from open repairs, budget exposure, and normal follow-up.`))return;
+
+    const btn=document.getElementById('ru-void-case');if(btn){btn.disabled=true;btn.textContent='Voiding…';}
+    try{
+      const token=await getToken(),date=todayISO(),updateId=`RU-${c.base.forkliftId.replace('#','')}-${date.replaceAll('-','')}-${Date.now()}`;
+      await createServiceEventRecord(token,{eventId:updateId,forkliftId:c.base.forkliftId,date,type:'Repair Update',vendor:c.latest?.vendor||c.base.vendor||'',vendorPhone:c.latest?.vendorPhone||c.base.vendorPhone||'',workroom:c.base.workroom||'',reference:'',hours:null,downtime:null,rentalRequired:false,description:`VOID / ENTERED IN ERROR — ${String(reason).trim()}`,notes:`Repair Case ID: ${c.base.eventId} | Case Status: Cancelled / No Longer Needed | [[REPAIR_VOID:${String(reason).trim().replace(/\]/g,'')}]]`,status:'Cancelled / No Longer Needed'},[]);
+
+      const baseNotes=[String(c.base.notes||'').replace(/(?:\s*\|\s*)?Current Operational Status:\s*[^|\n]*/ig,'').trim(),`Current Operational Status: Cancelled / No Longer Needed`,`[[REPAIR_VOID:${String(reason).trim().replace(/\]/g,'')}]]`].filter(Boolean).join(' | ');
+      await fmFinPatchService(token,c.base.spId,{'Status':'Cancelled / No Longer Needed','Notes':baseNotes,'Accounting Status':FM_NO_FIN});
+
+      closeRepairUpdateModal();tokenCache=null;await loadData(true);
+      alert('Repair Case voided. It remains in audit history but is removed from open repair and budget exposure.');
+    }catch(e){console.error(e);alert('Could not void Repair Case: '+e.message);}
+    finally{if(btn){btn.disabled=false;btn.textContent='Void / Entered in Error';}}
+  }
+  window.fm217VoidRepairCase=fm217VoidRepairCase;
+
+  const fm217BaseOpenUpdate=openRepairUpdate;
+  openRepairUpdate=function(caseId){
+    const r=fm217BaseOpenUpdate(caseId);fm217InstallVoidButton();
+    const c=repairCaseById(caseId),s=document.getElementById('ru-case-summary');
+    if(c&&s)s.textContent+=` · Case ${c.base.eventId}`;
+    return r;
+  };
+  window.openRepairUpdate=openRepairUpdate;
+
+  // Help text so the non-delete behavior is discoverable.
+  try{
+    const repair=[...document.querySelectorAll('.help-topic summary')].find(x=>x.textContent.trim()==='Repair Cases — the full workflow')?.parentElement?.querySelector('.help-body');
+    if(repair&&!repair.querySelector('.fm217-void-help'))repair.insertAdjacentHTML('beforeend','<p class="fm217-void-help"><b>Entered in error / duplicate:</b> open the Repair Case and use <b>Void / Entered in Error</b>. The record is retained for audit but excluded from open follow-up and financial forecasting. If a Repair Case saves but the optional Fleet Status change fails, the app will explicitly tell you the case was created so you do not enter it a second time.</p>');
+    if(typeof renderServiceView==='function')renderServiceView();
+    if(typeof renderBudget==='function')renderBudget();
+  }catch(e){console.warn('v2.17 initial refresh skipped:',e);}
+})();
+</script>
+
 </body>
 </html>
